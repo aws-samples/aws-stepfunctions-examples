@@ -1,0 +1,231 @@
+  {
+    "Comment": "A statemachine for running the main loop of tests ",
+    "StartAt": "VerifyInput",
+    "States": {
+      "VerifyInput": {
+        "Type": "Choice",
+        "Choices": [
+          {
+              "And": [
+              {
+                "Variable": "$.iteration_count",
+                "IsPresent": true
+              },
+              {
+                "Variable": "$.iteration_count",
+                "IsNumeric": true
+              }
+            ],
+            "Next": "RecordTestRunStart"
+          }
+        ],
+        "Default": "GenerateDefaultInput"
+        
+      },
+      "RecordTestRunStart": {
+        "Type": "Task",
+        "TimeoutSeconds": 305,
+        "Resource": "arn:aws:states:::dynamodb:putItem",
+        "Parameters": {
+        "TableName": "${TableTestRuns}",
+        "Item": {
+              "TestRunId": {
+                "S.$": "$$.Execution.Id"
+              },
+              "Status": {
+                "S": "Started"
+              },
+              "StartTime" : {
+                "S.$": "$$.Execution.StartTime"
+              },
+              "EndTime" : {
+                "S": ""
+              },
+              "IterationCount" : {
+                "N.$": "States.Format('{}',$.iteration_count)"
+              }
+          }
+        },
+        "ResultPath": "$.stateoutput.RecordTestRunStart",
+        "Retry": [ {
+          "ErrorEquals": [ "States.ALL" ],
+          "MaxAttempts": 15,
+          "BackoffRate": 2
+        } ],
+        "Next": "BuildBatches"
+    },
+      "GenerateDefaultInput": {
+        "Type": "Pass",
+        "Parameters": {
+          "iteration_count": 1
+        },
+        "Next": "RecordTestRunStart"
+      },
+      "BuildBatches": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "${FunctionBuildList}",
+          "Payload": {
+            "iteration_count.$": "$.iteration_count",
+            "execution_name.$": "$$.Execution.Name " 
+          }
+        },
+        "OutputPath": "$.Payload",
+        "Next": "RunTests",
+        "TimeoutSeconds": 905,
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "States.ALL"
+            ],
+            "IntervalSeconds": 1,
+            "BackoffRate": 2,
+            "MaxAttempts": 15
+          }
+        ]
+      },
+      "RunTests": {
+        "Type": "Map",
+        "ItemsPath": "$.batch_index",
+        "Parameters": {
+          "batch_id.$": "$$.Map.Item.Value",
+          "test-run-id.$": "$$.Execution.Id",
+          "s3_bucket.$": "$.s3_bucket",
+          "s3_key.$": "$.s3_key"
+        },
+        "MaxConcurrency": 0,
+        "Iterator": {
+          "StartAt": "GetBatchInfo",
+          "States": {
+            "GetBatchInfo": {
+              "Type": "Task",
+              "TimeoutSeconds": 305,
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${FunctionGetBatcheFromS3}",
+                "Payload": {
+                    "s3_bucket.$": "$.s3_bucket",
+                    "s3_key.$": "$.s3_key",
+                    "batch_id.$": "$.batch_id"
+                }
+              },             
+              "ResultSelector": {"Payload.$": "$.Payload"},
+              "ResultPath": "$.stateoutputs.GetBatchInfo",
+              "Retry": [ {
+                "ErrorEquals": [ "States.ALL" ],
+                "MaxAttempts": 15,
+                "BackoffRate": 2
+              } ],
+              "Next": "RunDistributorStateMachine"
+            },
+            "RunDistributorStateMachine": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::states:startExecution.sync:2",
+              "Parameters": {
+                "Input": {
+                  "AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$": "$$.Execution.Id",
+                  "tests-to-run.$": "$.stateoutputs.GetBatchInfo.Payload.tests-to-run",
+                  "test-run-id.$": "$$.Execution.Id"
+                },
+                "StateMachineArn": "${StateMachineDistributor}",
+                "Name.$": "States.Format('{}_batch{}',$$.Execution.Name,$['stateoutputs']['GetBatchInfo']['Payload']['batchnumber'])"
+              },
+              "ResultSelector": {"Nothing": "Nothing"},
+              "Next": "ClearResults",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "StepFunctions.ExecutionAlreadyExistsException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "BackoffRate": 5,
+                  "MaxAttempts": 1
+                },
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "IntervalSeconds": 1,
+                  "BackoffRate": 2,
+                  "MaxAttempts": 12
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": [
+                    "States.TaskFailed"
+                  ],
+                  "ResultPath": "$.stateoutput.RunDistributorStateMachine",
+                  "Next": "ClearResults"
+                }
+              ]
+            },
+            "ClearResults": {
+              "Type": "Pass",
+              "Result": "Done",
+              "End": true
+            }
+          }
+        },
+        "ResultPath": "$.stateoutput.RunDistributorStateMachine",
+        "Next": "GetTestRunReport"
+      },
+      "GetTestRunReport": {
+        "Type": "Task",
+        "TimeoutSeconds": 305,
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "${LambdaGetTestRunReport}",
+          "Payload": {
+            "Input": {
+              "event_run_id.$": "$$.Execution.Id",
+              "table_name": "${TableTestResults}"
+            }
+          }
+        },
+        "ResultPath": "$.stateoutput.GetTestRunReport",       
+        "Retry": [ {
+          "ErrorEquals": [ "States.ALL" ],
+          "MaxAttempts": 15,
+          "BackoffRate": 2
+        } ],
+        "Next": "RecordTestRunComplete"
+      },
+      "RecordTestRunComplete": {
+        "Type": "Task",
+        "TimeoutSeconds": 305,
+        "Resource": "arn:aws:states:::dynamodb:putItem",
+        "Parameters": {
+        "TableName": "${TableTestRuns}",
+        "Item": {
+              "TestRunId": {
+                "S.$": "$$.Execution.Id"
+              },
+              "Status": {
+                "S": "Complete"
+              },
+              "StartTime" : {
+                "S.$": "$$.Execution.StartTime"
+              },
+              "EndTime" : {
+                "S.$": "$$.State.EnteredTime"
+              },
+              "IterationCount" : {
+                "N.$": "States.Format('{}',$.stateoutput.GetTestRunReport.Payload.summary.test_count)"
+              }
+          }
+        },
+        "ResultPath": "$.stateoutput.RecordTestRunComplete",
+        "OutputPath": "$.stateoutput.GetTestRunReport.Payload",
+        "Retry": [ {
+          "ErrorEquals": [ "States.ALL" ],
+          "MaxAttempts": 15,
+          "BackoffRate": 2
+        } ],
+        "End": true
+    }
+
+
+    }
+  }

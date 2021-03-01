@@ -1,11 +1,6 @@
-## My Project
+## aws-stepfunctions-examples
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+AWS Step Functions is an orchestration service for reliably executing multi-step processes using visual workflows. This repository includes detailed examples that will help you unlock the power of serverless workflow.
 
 ## Security
 

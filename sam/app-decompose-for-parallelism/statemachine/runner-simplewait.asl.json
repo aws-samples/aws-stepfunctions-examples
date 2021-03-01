@@ -1,0 +1,39 @@
+  {
+    "Comment": "A statemachine for running tests.",
+    "StartAt": "VerifyInput",
+    "States": {
+            "VerifyInput": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                    "And": [
+                    {
+                      "Variable": "$.test-input.delay-seconds",
+                      "IsPresent": true
+                    },
+                    {
+                      "Variable": "$.test-input.delay-seconds",
+                      "IsNumeric": true
+                    }
+                  ],
+                  "Next": "RunTest"
+                }
+              ],
+              "Default": "GenerateDefaultTestInput"
+              
+            },
+            "GenerateDefaultTestInput": {
+              "Type": "Pass",
+              "Parameters": {
+                "delay-seconds": 5
+              },
+              "ResultPath": "$.test-input",
+              "Next": "RunTest"
+            },
+            "RunTest": {
+              "Type": "Wait",
+              "SecondsPath": "$.test-input.delay-seconds",
+              "End": true
+            }
+      }
+    }

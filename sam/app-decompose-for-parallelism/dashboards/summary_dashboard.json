@@ -1,0 +1,300 @@
+{
+    "widgets": [
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 12,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "AWS/States", "ThrottledEvents", "ServiceMetric", "StateTransition" ],
+                    [ ".", "ConsumedCapacity", ".", "." ],
+                    [ ".", "ProvisionedRefillRate", ".", ".", { "yAxis": "right", "stat": "Maximum" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 60,
+                "yAxis": {
+                    "right": {
+                        "label": "Refill Rate (Per Second)",
+                        "min": 0,
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "State Transitions (per Minute)",
+                        "showUnits": false
+                    }
+                },
+                "title": "Step Functions - Standard - State Transition Quota Consumption",
+                "start": "-PT1H",
+                "end": "P0D"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 9,
+            "y": 12,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ "AWS/States", "ConsumedCapacity", "APIName", "DescribeExecution" ],
+                    [ ".", "ThrottledEvents", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 60,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Transactions Per Minute",
+                        "showUnits": false
+                    }
+                },
+                "title": "Step Functions - API Calls - Describe Execution",
+                "start": "-PT1H",
+                "end": "P0D"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 18,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 60,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Transactions Per Minute",
+                        "showUnits": false
+                    }
+                },
+                "title": "Step Functions - API Calls - StartExecution and StartExpressExecution",
+                "start": "-PT1H",
+                "end": "P0D",
+                "metrics": [
+                    [ "AWS/States", "ConsumedCapacity", "APIName", "StartExpressExecution" ],
+                    [ ".", "ThrottledEvents", ".", "." ],
+                    [ ".", "ConsumedCapacity", ".", "StartExecution" ],
+                    [ ".", "ThrottledEvents", ".", "." ]
+                ]
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 6,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ { "expression": "SEARCH('{!!!METRICNAMESPACE!!!,TestName} TestSuccess', 'Average', 60)", "id": "e1", "period": 300 } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 300,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Success Rate",
+                        "showUnits": false,
+                        "max": 1
+                    }
+                },
+                "title": "Test Success Rate",
+                "start": "-PT1H",
+                "end": "P0D"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 9,
+            "y": 0,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ { "expression": "SEARCH('{!!!METRICNAMESPACE!!!,TestName} TestDuration', 'Average', 60)", "id": "e2", "period": 300 } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 300,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Average Test Duration (ms)",
+                        "showUnits": false
+                    }
+                },
+                "title": "Average Test Duration",
+                "start": "-PT1H",
+                "end": "P0D"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 9,
+            "y": 6,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ { "expression": "SEARCH('{!!!METRICNAMESPACE!!!,TestName} TestDuration', 'p99', 60)", "id": "e2", "period": 300 } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 300,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Average Test Duration (ms)",
+                        "showUnits": false
+                    }
+                },
+                "title": "p99 Test Duration",
+                "start": "-PT1H",
+                "end": "P0D"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 0,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ { "expression": "SEARCH('{!!!METRICNAMESPACE!!!,TestName} TestSuccess', 'SampleCount', 60)", "id": "e1", "period": 300, "region": "!!!REGION!!!" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 300,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Test Execution Counts",
+                        "showUnits": false
+                    }
+                },
+                "title": "Test Execution Counts"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 9,
+            "y": 18,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ { "expression": "SEARCH('{AWS/States,StateMachineArn} ExecutionsFailed', 'Sum', 60)", "id": "e1", "period": 300, "region": "!!!REGION!!!" } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 300,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Executions Started per Minute",
+                        "showUnits": false
+                    }
+                },
+                "title": "State Machine Executions Failed per Minute"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 24,
+            "width": 9,
+            "height": 6,
+            "properties": {
+                "metrics": [
+                    [ { "expression": "SEARCH('{AWS/States,StateMachineArn} ExecutionsStarted', 'Sum', 60)", "id": "e1", "period": 300 } ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "!!!REGION!!!",
+                "stat": "Sum",
+                "period": 300,
+                "yAxis": {
+                    "right": {
+                        "label": "",
+                        "showUnits": false
+                    },
+                    "left": {
+                        "min": 0,
+                        "label": "Executions Started per Minute",
+                        "showUnits": false
+                    }
+                },
+                "title": "State Machine Executions Started per Minute",
+                "start": "-PT1H",
+                "end": "P0D"
+            }
+        },
+        {
+            "type": "log",
+            "x": 0,
+            "y": 30,
+            "width": 18,
+            "height": 9,
+            "properties": {
+                "query": "SOURCE '!!!LOGGROUP!!!' | fields @timestamp, type, details.resourceType,details.resource,details.error,details.cause\n| filter type LIKE /Fail/\n| sort @timestamp desc\n| limit 1000",
+                "region": "!!!REGION!!!",
+                "title": "Recent Task Failures",
+                "view": "table"
+            }
+        }
+    ]
+}
