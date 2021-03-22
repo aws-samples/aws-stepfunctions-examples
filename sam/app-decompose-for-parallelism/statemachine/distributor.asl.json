@@ -95,6 +95,7 @@
             "RunTestStateMachine": {
               "Type": "Task",
               "Resource": "arn:aws:states:::states:startExecution.sync:2",
+              "TimeoutSeconds": 65,
               "Parameters": {
                 "Input": {
                   "AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$": "$$.Execution.Id",
@@ -112,9 +113,7 @@
                   "ErrorEquals": [
                     "StepFunctions.ExecutionAlreadyExistsException"
                   ],
-                  "IntervalSeconds": 1,
-                  "BackoffRate": 5,
-                  "MaxAttempts": 1
+                  "MaxAttempts": 0
                 },
                 {
                   "ErrorEquals": [
@@ -130,6 +129,7 @@
                   "ErrorEquals": [
                     "States.TaskFailed"
                   ],
+                  "ResultPath": "$.testresults",
                   "Next": "RecordResults"
                 }
               ]
@@ -137,6 +137,7 @@
             "RecordResults": {
                 "Type": "Task",
                 "Resource": "arn:aws:states:::states:startExecution.sync:2",
+                "TimeoutSeconds": 65,
                 "Parameters": {
                     "Input.$": "$.testresults",
                     "StateMachineArn": "${StateMachineTestResultRecorder}",

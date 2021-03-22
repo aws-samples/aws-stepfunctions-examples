@@ -1,5 +1,5 @@
   {
-    "Comment": "A statemachine for running tests.",
+    "Comment": "A state machine that stands in for running an actual test. This one will simply wait for 5 seconds or for the number or seconds requested in the input.",
     "StartAt": "VerifyInput",
     "States": {
             "VerifyInput": {
