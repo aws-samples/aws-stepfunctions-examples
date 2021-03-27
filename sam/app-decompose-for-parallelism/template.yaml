@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: "Sfn-test-runner: An example app that demonstrates how to decompose large workflows to improve parallelism and manageablity"
+Description: "Sfn-test-runner: An example app that demonstrates how to decompose large workflows to improve parallelism and manageability"
 
 Parameters:
   ParameterInstancePrefix:
