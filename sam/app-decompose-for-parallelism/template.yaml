@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT-0
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: "Sfn-test-runner: An example app that demonstrates how to decompose large workflows to improve paralleism and manageablity"
+Description: "Sfn-test-runner: An example app that demonstrates how to decompose large workflows to improve parallelism and manageablity"
 
 Parameters:
   ParameterInstancePrefix:
@@ -80,7 +80,7 @@ Resources:
                 Resource: !Join ["",['arn:aws:s3:::',!Ref IntermediaryS3Bucket,'/*']]
       ManagedPolicyArns: 
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-  # Main statemachine that runs the tests
+  # Main state machine that runs the tests
   StateMachineMain:
     Type: AWS::Serverless::StateMachine
     Properties:
@@ -233,7 +233,7 @@ Resources:
       Timeout: 60
       Role: !GetAtt ApplicationRole.Arn
 
-  # Lambda function that will get the reuslts of a test run to provide in the output
+  # Lambda function that will get results of a test run to provide in the output
   LambdaGetTestRunReport:
     Type: AWS::Serverless::Function
     Properties:
