@@ -4,11 +4,11 @@ AWS Step Functions is an orchestration service for reliably executing multi-step
 
 ## Examples and Supporting Blog Posts
 
-## Accelerating workloads using parallelism in AWS Step Functions
+### Accelerating workloads using parallelism in AWS Step Functions
 
 In this example, you use [AWS Step Functions](https://aws.amazon.com/step-functions/) to build an application that uses parallel processing to complete four hours of work in around 60 seconds.
 
-Blog Post: [Accelerating workloads using parallelism in AWS Step Functions](https://aws.amazon.com/blogs/compute/accelerating-workloads-using-parallelism-in-aws-step-functions/]
+Blog Post: [Accelerating workloads using parallelism in AWS Step Functions](https://aws.amazon.com/blogs/compute/accelerating-workloads-using-parallelism-in-aws-step-functions/)
 
 ### Controlling concurrency in distributed systems using AWS Step Functions
 
