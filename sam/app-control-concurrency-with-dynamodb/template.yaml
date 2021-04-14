@@ -1,0 +1,183 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Sfn-test-runner: An example app that demonstrates how to decompose large workflows to improve paralleism and manageablity"
+
+Parameters:
+  ParameterInstancePrefix:
+    Type: String
+    Default: "CC"
+    Description: "Prefix to be used in names of the things created by this stack."
+  ParameterLockName:
+    Type: String
+    Default: "MySemaphore"
+
+Resources:
+############### Test Infrastructure ###############################################
+  # Define a common IAM role to be used for all components of this app
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+                - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - events:PutTargets
+                - events:PutRule
+                - events:DescribeRule
+                - states:StartExecution
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - cloudwatch:PutMetricData
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - dynamodb:*
+                Resource: !GetAtt TableSemaphore.Arn
+              -
+                Effect: Allow
+                Action:
+                - lambda:InvokeFunction
+                Resource: '*'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # Main statemachine that runs the tests  
+  StateMachineSempaphore:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/dynamodb-semaphore.asl.json
+      DefinitionSubstitutions:
+        TableSemaphore: !Join ["",[!Ref ParameterInstancePrefix,"-","locktable"]]
+        LockName: !Ref ParameterLockName
+        LambdaDoWorkFunction: !GetAtt LambdaDoWorkFunction.Arn
+        ConcurrentAccessLimit: "5"
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterInstancePrefix,'-',"ConcurrencyControlledStateMachine"]]
+
+  StateMachineSempaphoreCleanup:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/dynamodb-semaphore-cleanfromincomplete.asl.json
+      DefinitionSubstitutions:
+        TableSemaphore: !Join ["",[!Ref ParameterInstancePrefix,"-","locktable"]]
+        LockName: !Ref ParameterLockName
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterInstancePrefix,'-',"CleanFromIncomplete"]]
+      Events:
+        RunForIncomplete:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - "aws.states"
+              detail:
+                stateMachineArn: 
+                  - !Ref StateMachineSempaphore
+                status:
+                  - FAILED
+                  - TIMED_OUT
+                  - ABORTED
+                
+  
+  StateMachineTestSemaphore:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/test-run-semaphore.asl.json
+      DefinitionSubstitutions:
+        StateMachineSemaphore: !Ref StateMachineSempaphore
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterInstancePrefix,'-',"Test-Run100Executions"]]
+
+  # Dynamo DB Tables
+  TableSemaphore:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "LockName"
+          AttributeType: "S"
+      BillingMode: PAY_PER_REQUEST
+      KeySchema: 
+        - 
+          AttributeName: "LockName"
+          KeyType: "HASH"
+      TableName: !Join ["",[!Ref ParameterInstancePrefix,"-","locktable"]]   
+
+  # Lambda function that builds up a list of things to run
+  LambdaDoWorkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/do_work_function/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Timeout: 60
+      Role: !GetAtt ApplicationRole.Arn
+
+  LogGroupStateMachines:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "", ["/aws/states/",!Ref ParameterInstancePrefix,"-StateMachineLogs"]]
+ 
+Outputs:
+  StateMachineLogGroup:
+    Description: "Log group for statemachine logs"
+    Value: !GetAtt  LogGroupStateMachines.Arn
+  StateMachineMain:
+    Description: "Main statemachine that is the entry point for this application"
+    Value: !Ref StateMachineSempaphore
+
