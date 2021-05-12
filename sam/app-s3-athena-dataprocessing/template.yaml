@@ -1,0 +1,256 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "App-s3-athena-dataprocessing"
+
+Mappings:
+  S3Locations:
+    DataStore1:
+      Current:    "datasources/datastore1/current/"
+      Historical: "datasources/datastore1/historical/"
+    DataStore2:
+      Current:    "datasources/datastore2/current/"
+      Historical: "datasources/datastore2/historical/"
+    DataStore3:
+      Current:    "datasources/datastore3/current/"
+      Historical: "datasources/datastore3/historical/"
+
+
+Parameters:
+  ParameterServiceCode:
+    Type: String
+    Description: "Code representing this service"
+  ParameterEnvCode:
+    Type: String
+    Description: "Code to represent the environment for uniqueness"
+
+
+Resources:
+############### Test Infrastructure ###############################################
+  # Define a common IAM role to be used for all components of this app
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+                - "lambda.amazonaws.com"
+                - "glue.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - events:PutTargets
+                - events:PutRule
+                - events:DescribeRule
+                - states:StartExecution
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - cloudwatch:PutMetricData
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - lambda:InvokeFunction
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - s3:*
+                Resource: "*"
+              - Effect: Allow
+                Action: athena:*
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - glue:*
+                  - iam:ListRolePolicies
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                Resource: '*'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # An S3 bucket to store data being processed
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName : !Join ["",["serivcedata-",!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName : !Join ["",["serivcedata-",!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-athena-results"]]
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256   
+
+  LogGroupStateMachines:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ["",["/aws/states/serivcedata-",!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode, "-StateMachineLogs"]]
+  
+  StateMachineInitializeAccount:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/initialize_account.asl.json
+      DefinitionSubstitutions:
+        LambdaCreateS3Folder: !GetAtt LambdaCreateS3Folder.Arn
+        ParameterFolderDataStore1Current: !FindInMap ["S3Locations","DataStore1","Current"]
+        ParameterFolderDataStore1Historical: !FindInMap ["S3Locations","DataStore1","Historical"]
+        ParameterFolderDataStore2Current: !FindInMap ["S3Locations","DataStore2","Current"]
+        ParameterFolderDataStore2Historical: !FindInMap ["S3Locations","DataStore2","Historical"]
+        ParameterFolderDataStore3Current: !FindInMap ["S3Locations","DataStore3","Current"]
+        ParameterFolderDataStore3Historical:  !FindInMap ["S3Locations","DataStore3","Historical"]
+        LambdaListGlueCrawlers: !GetAtt LambdaListGlueCrawlers.Arn
+        GlueCrawlerPrefix: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+        LambdaStartGlueCrawler: !GetAtt LambdaStartGlueCrawler.Arn
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-InitializeAccount"]]
+
+  LambdaCreateS3Folder:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/create_s3_folder/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Environment:
+        Variables:
+          bucketname: !Ref DataBucket
+      Role: !GetAtt ApplicationRole.Arn
+      Timeout: 30
+
+  LambdaStartGlueCrawler:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/start_glue_crawler/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Role: !GetAtt ApplicationRole.Arn
+      Timeout: 30
+  
+  LambdaListGlueCrawlers:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/list_glue_crawlers/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Role: !GetAtt ApplicationRole.Arn
+      Timeout: 30
+
+
+  GlueCrawlerDataStore1Current:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+      Name: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-DataStore1-Current"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/",!FindInMap ["S3Locations","DataStore1","Current"]]]
+      TablePrefix: "datastore1_"
+  GlueCrawlerDataStore1Historical:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+      Name: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-DataStore1-Historical"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/",!FindInMap ["S3Locations","DataStore1","Historical"]]]
+      TablePrefix: "datastore1_"
+
+  GlueCrawlerDataStore2Current:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+      Name: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-DataStore2-Current"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/",!FindInMap ["S3Locations","DataStore2","Current"]]]
+      TablePrefix: "datastore2_"
+  GlueCrawlerDataStore2Historical:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+      Name: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-DataStore2-Historical"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/",!FindInMap ["S3Locations","DataStore2","Historical"]]]
+      TablePrefix: "datastore2_"
+
+  GlueCrawlerDataStore3Current:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+      Name: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-DataStore3-Current"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/",!FindInMap ["S3Locations","DataStore3","Current"]]]
+      TablePrefix: "datastore3_"
+  GlueCrawlerDataStore3Historical:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode]]
+      Name: !Join ["",[!Ref ParameterServiceCode, "-",!Ref ParameterEnvCode,"-DataStore3-Historical"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/",!FindInMap ["S3Locations","DataStore3","Historical"]]]
+      TablePrefix: "datastore3_"
+   
+
+Outputs:
+  DataBucket:
+    Description: "Bucket containing data"
+    Value: !Ref DataBucket
+  StateMachineInitializeAccount:
+    Description: "StateMachine for setting up the account"
+    Value: !Ref StateMachineInitializeAccount
+  
+  

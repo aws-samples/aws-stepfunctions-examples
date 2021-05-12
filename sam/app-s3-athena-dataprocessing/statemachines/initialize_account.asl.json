@@ -1,0 +1,107 @@
+{
+    "Comment": "A State Machine to initialize the account",
+    "StartAt": "Build Folder List",
+    "States": {
+      "Build Folder List": {
+        "Type": "Pass",
+        "Result": [
+            "${ParameterFolderDataStore1Current}",
+            "${ParameterFolderDataStore1Historical}",
+            "${ParameterFolderDataStore2Current}",
+            "${ParameterFolderDataStore2Historical}",
+            "${ParameterFolderDataStore3Current}",
+            "${ParameterFolderDataStore3Historical}"
+        ],
+        "Comment": "Build a list of folders that should be created in s3",
+        "Next": "Create Default Folders"
+      },
+      "Create Default Folders": {
+        "Type": "Map",
+        "Iterator": {
+          "StartAt": "Ensure Folder Exists",
+          "States": {
+            "Ensure Folder Exists": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "Payload": {"folder_path.$": "$"},
+                "FunctionName": "${LambdaCreateS3Folder}"
+              },
+              "ResultSelector": {
+                "FunctionResult.$": "$.Payload"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        },
+        "Next": "Get Glue Crawler List"
+      },
+      "Get Glue Crawler List": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "Payload": {"crawler_prefix": "${GlueCrawlerPrefix}"},
+          "FunctionName": "${LambdaListGlueCrawlers}"
+        },
+        "OutputPath": "$.Payload",
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Run Glue Crawlers"
+      },
+      "Run Glue Crawlers": {
+        "Type": "Map",
+        "Iterator": {
+          "StartAt": "Start Glue Crawler",
+          "States": {
+            "Start Glue Crawler": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "Payload": {"crawler_name.$": "$"},
+                "FunctionName": "${LambdaStartGlueCrawler}"
+              },
+              "ResultSelector": {
+                "FunctionResult.$": "$.Payload"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true
+            }
+          }
+        },
+        "End": true
+      }
+    }
+  }

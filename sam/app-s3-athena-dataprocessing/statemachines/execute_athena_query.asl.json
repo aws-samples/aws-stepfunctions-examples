@@ -1,0 +1,146 @@
+{
+    "StartAt": "confirm_service_name",
+    "States": {
+        "confirm_service_name": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                  "And": [
+                  {
+                    "Variable": "$.service_name",
+                    "IsPresent": true
+                  },
+                  {
+                    "Variable": "$.service_name",
+                    "IsString": true
+                  }
+                ],
+                "Next": "handle_input"
+              }
+            ],
+            "Default": "default_service_name"
+            
+        },
+        "default_service_name": {
+            "Type": "Pass",
+            "Parameters": {
+                "service_name": "Step Functions"
+            },
+            "Next": "handle_input"
+        },
+        "handle_input": {
+            "Comment": "Take the input to the state_machine",
+            "Type": "Pass",
+            "Parameters": {
+                "service_name.$": "$.service_name",
+                "query_text": "${GetCurrentCommittedOpportunities}"
+            },
+            "Next": "get_athena_query"
+        },
+        "get_athena_query": {
+            "Comment": "Get the query that needs to be run",
+            "Parameters": {
+                "query_text.$": "States.Format($.query_text,$.service_name)",
+                "database": "${DatabaseName}"
+            },
+            "ResultPath": "$.stateoutput.get_athena_query",
+            "Type": "Pass",
+            "Next": "start_athena_query"
+        },
+        "start_athena_query": {
+            "Resource": "arn:aws:states:::athena:startQueryExecution",
+            "Parameters": {
+                "QueryString.$": "$.stateoutput.get_athena_query.query_text",
+                "QueryExecutionContext": {
+                    "Database.$": "$.stateoutput.get_athena_query.database"
+                },
+                "ResultConfiguration": {
+                    "OutputLocation": "s3://${AthenaResultsBucket}"
+                }
+            },
+            "TimeoutSeconds": 60,
+            "ResultPath": "$.stateoutput.start_athena_query",
+            "Comment": "Start the athena query",
+            "Type": "Task",
+            "Next": "wait_to_query",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 5,
+                    "BackoffRate": 1.5
+                }
+            ]
+        },
+        "wait_to_query": {
+            "Seconds": 2,
+            "Comment": "Wait around a bit",
+            "Type": "Wait",
+            "Next": "get_athena_execution_status"
+        },
+        "get_athena_execution_status": {
+            "Comment": "Get the status of the execution",
+            "Resource": "arn:aws:states:::athena:getQueryExecution",
+            "Parameters": {
+                "QueryExecutionId.$": "$.stateoutput.start_athena_query.QueryExecutionId"
+            },
+            "ResultPath": "$.stateoutput.get_athena_execution_status",
+            "TimeoutSeconds": 60,
+            "Type": "Task",
+            "Next": "is_query_finished",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 5,
+                    "BackoffRate": 1.5
+                }
+            ]
+        },
+        "is_query_finished": {
+            "Comment": "Decide what to do based on the result of the query",
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Variable": "$.stateoutput.get_athena_execution_status.QueryExecution.Status.State",
+                    "StringEquals": "RUNNING",
+                    "Next": "wait_to_query"
+                }
+            ],
+            "Default": "get_query_results"
+        },
+        "get_query_results": {
+            "Comment": "Get the results of the query",
+            "Resource": "arn:aws:states:::athena:getQueryResults",
+            "Parameters": {
+                "QueryExecutionId.$": "$.stateoutput.start_athena_query.QueryExecutionId"
+            },
+            "ResultPath": "$.stateoutput.get_query_results",
+            "Type": "Task",
+            "Next": "prepare_output_success",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "IntervalSeconds": 2,
+                    "MaxAttempts": 5,
+                    "BackoffRate": 1.5
+                }
+            ]
+        },
+        "prepare_output_success": {
+            "Comment": "Prepare output to return to the caller",
+            "Parameters": {
+                "QueryExecutionId.$": "$.stateoutput.start_athena_query.QueryExecutionId",
+                "QueryResults.$": "$.stateoutput.get_query_results.ResultSet.Rows"
+            },
+            "Type": "Pass",
+            "End": true
+        }
+    }
+}
