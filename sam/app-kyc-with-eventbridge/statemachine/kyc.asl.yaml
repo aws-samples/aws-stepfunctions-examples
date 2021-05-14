@@ -1,0 +1,131 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+Comment: >-
+  A Know Your Customer (KYC) process consists of a number of customer identity
+  checks that precede a decision to approve a new customer and start 
+  the on-boarding process.
+StartAt: Check identity
+States:
+  Check identity:
+    Type: Parallel
+    Next: Identity check completed
+    ResultSelector: 
+      indentityChecked.$: '$[0].indentityChecked'
+      agencyChecked.$: '$[1].agencyChecked'
+      customerName.$: '$[0].customerName'
+      customerAddress.$: '$[0].customerAddress'
+    Branches:
+      - 
+        StartAt: Check name and address
+        States:
+          Check name and address:
+            Comment: >-
+              Validate name & address – check customer identity.
+            Type: Pass
+            Result: true
+            ResultPath: $.indentityChecked
+            End: true 
+      - 
+        StartAt: Agency security clearance
+        States: 
+          Agency security clearance:
+            Comment: >-
+              Validate name with national securty agency – check the name against 
+              lists of known people.
+            Type: Pass
+            Result: true
+            ResultPath: $.agencyChecked
+            End: true
+
+  Identity check completed:
+    Comment: >- 
+      Publish event when identity check has been completed
+    Type: Task
+    Resource: 'arn:aws:states:::events:putEvents'
+    Parameters:
+        Entries:
+            - 
+                Detail.$: $
+                DetailType: Identity check completed
+                EventBusName: '${CentralEventBusName}'
+                Source: com.aws.kyc
+    Next: Verify risk profile
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 1
+        BackoffRate: 2
+        MaxAttempts: 2
+
+  Verify risk profile:
+    Comment: >-
+     Calculate the customer’s risk of being involved in illegal activity.
+    Type: Pass
+    Result: true
+    ResultPath: $.checksPassed
+    Next: Approve or decline
+
+  Approve or decline:
+    Comment: >-
+      Approve or decline the new account request
+    Type: Choice
+    Choices:
+      - Variable: $.checksPassed
+        BooleanEquals: true
+        Next: Update risk profile
+      - Variable: $.checksPassed
+        BooleanEquals: false
+        Next: New account declined
+    Default: New account declined
+
+  Update risk profile:
+    Comment: >-
+     Update risk profile
+    Type: Pass
+    Next: New account approved
+
+  New account approved:
+    Comment: >- 
+      Publish event new customer account request has been approved
+    Type: Task
+    Resource: 'arn:aws:states:::events:putEvents'
+    Parameters:
+        Entries:
+            - 
+                Detail.$: $
+                DetailType: New account approved
+                EventBusName: '${CentralEventBusName}'
+                Source: com.aws.kyc
+    Next: Succeeded
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 1
+        BackoffRate: 2
+        MaxAttempts: 2
+
+  New account declined:
+    Comment: >- 
+      Publish event new account request has been declined
+    Type: Task
+    Resource: 'arn:aws:states:::events:putEvents'
+    Parameters:
+        Entries:
+            - 
+                Detail.$: $
+                DetailType: New account declined
+                EventBusName: '${CentralEventBusName}'
+                Source: com.aws.kyc
+    Next: Failed
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        IntervalSeconds: 1
+        BackoffRate: 2
+        MaxAttempts: 2
+        
+  Succeeded:
+    Type: Succeed
+
+  Failed:
+    Type: Fail

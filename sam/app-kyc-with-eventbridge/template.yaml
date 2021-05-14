@@ -1,0 +1,174 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'SAM template for Know Your Customer (KYC) process.'
+
+
+Parameters:
+  ParameterInstancePrefix:
+    Type: String
+    Default: "kyc"
+    Description: "Prefix to be used in names of the things created by this stack."
+
+Resources:
+  
+  CentralEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: CentralEventBus
+
+  KycStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/kyc.asl.yaml
+      DefinitionSubstitutions:
+        CentralEventBusName: !Ref CentralEventBus
+      Policies:
+        - AWSXRayDaemonWriteAccess
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref CentralEventBus
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'logs:CreateLogDelivery'
+                - 'logs:GetLogDelivery'
+                - 'logs:UpdateLogDelivery'
+                - 'logs:DeleteLogDelivery'
+                - 'logs:ListLogDeliveries'
+                - 'logs:PutResourcePolicy'
+                - 'logs:DescribeResourcePolicies'
+                - 'logs:DescribeLogGroups'
+                - 'cloudwatch:PutMetricData'
+              Resource: '*'
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  StateMachinesLogGroup.Arn
+        Level: ALL
+        IncludeExecutionData: True
+      Tracing:
+        Enabled: True
+      Events:
+        NewAccountRequestedRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref CentralEventBus
+            InputPath: $.detail
+            Pattern:
+              source:
+                  - com.aws.accounts
+              detail-type:
+                  - New account requested
+              account:
+                  - !Ref AWS::AccountId
+
+  AccountsLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      RetentionInDays: 3
+      LogGroupName: !Join [ "", ["/aws/events/", !Ref ParameterInstancePrefix,"-","accounts-logs"]]
+
+  CustomerServiceLogGroup: 
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      RetentionInDays: 3
+      LogGroupName: !Join [ "", ["/aws/events/", !Ref ParameterInstancePrefix,"-","customer-service-logs"]]
+
+  StateMachinesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Join [ "", ["/aws/states/", !Ref ParameterInstancePrefix,"-", "statemachine-logs"]]
+
+
+  # Rule process events published by the state machine
+  AccountKycResponseRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: acc_kyc_response_rule
+      Description: Rule to process results of KYC.
+      EventBusName: !Ref CentralEventBus
+      EventPattern:
+        source:
+          - com.aws.kyc
+        detail-type:
+          - New account approved
+          - New account declined
+      State: ENABLED
+      RoleArn: !GetAtt WriteToCwlRole.Arn
+      Targets: 
+        - Id: SendToAccountsLogGroup
+          Arn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AccountsLogGroup}"
+
+  AccountKycIdCheckRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: acc_kyc_id_check_rule
+      Description: Rule to process KYC response.
+      EventBusName: !Ref CentralEventBus
+      EventPattern:
+        source:
+          - com.aws.kyc
+        detail-type:
+          - Identity check completed
+      State: ENABLED
+      RoleArn: !GetAtt WriteToCwlRole.Arn
+      Targets: 
+        - Id: SendToAccountsLogGroup
+          Arn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AccountsLogGroup}"
+  
+  CustomerServiceKycApprovedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: cs_kyc_approved_rule
+      Description: Rule to process KYC response.
+      EventBusName: !Ref CentralEventBus
+      EventPattern:
+        source:
+          - com.aws.kyc
+        detail-type:
+          - New account approved
+      State: ENABLED
+      RoleArn: !GetAtt WriteToCwlRole.Arn
+      Targets: 
+        - Id: SendToCustomerServiceLogGroup
+          Arn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${CustomerServiceLogGroup}"
+  
+  WriteToCwlRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - events.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: WriteToAccountsLogGroup
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStreams'
+                  - 'logs:PutLogEvents'
+                Resource: 
+                  - !GetAtt AccountsLogGroup.Arn
+                  - !GetAtt CustomerServiceLogGroup.Arn
+
+Outputs:
+
+  CentralEventBusArn:
+    Description: The ARN of the central event bus
+    Value: !GetAtt CentralEventBus.Arn
+
+  KycStateMachineArn:
+    Description: "The ARN of the State Machine"
+    Value: !GetAtt KycStateMachine.Arn

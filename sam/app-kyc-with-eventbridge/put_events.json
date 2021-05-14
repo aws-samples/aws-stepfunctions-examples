@@ -1,0 +1,14 @@
+[
+  {
+    "Source": "com.aws.accounts",
+    "Detail": "{ \"customerName\": \"Nikki Wolf\",  \"customerAddress\": \"123 Any Street, Any Town, USA\" }",
+    "DetailType": "New account requested",
+    "EventBusName": "CentralEventBus"
+  },
+  {
+    "Source": "com.aws.accounts",
+    "Detail": "{ \"customerName\": \"Paulo Santos\",  \"customerAddress\": \"100 Main Street, Anytown, USA\"}",
+    "DetailType": "New account requested",
+    "EventBusName": "CentralEventBus"
+  }
+]
