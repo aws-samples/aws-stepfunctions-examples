@@ -105,6 +105,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
   
   AthenaResultsBucket:
     Type: AWS::S3::Bucket
@@ -116,7 +118,9 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256   
+              SSEAlgorithm: AES256 
+      VersioningConfiguration:
+        Status: Enabled  
 
   LogGroupStateMachines:
     Type: AWS::Logs::LogGroup
