@@ -1,0 +1,148 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "ASL Demo: Examples of how to use the Amazon States Language."
+
+Parameters:
+  ParameterPrefix:
+    Type: String
+    Default: "ASL-Demo"
+    Description: "Prefix to be used in names of the things created by this stack."
+  
+
+Resources:
+############### Test Infrastructure ###############################################
+  # Define a common IAM role to be used for all components of this app
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - states.amazonaws.com
+            Action: 
+              - "sts:AssumeRole"
+
+  # State Machines
+  StateMachineAslDemo:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterPrefix,'-',"PetCreator"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Definition:
+        Comment: This is your state machine
+        StartAt: Generate startup log message using States.Format and Context Object
+        States:
+          Generate startup log message using States.Format and Context Object:
+            Type: Pass
+            Next: Generate an array using States.Array
+            Parameters:
+              startupLogMessage.$: States.Format('Starting execution of {} at {} with role
+                of {}',$$.StateMachine.Name,$$.Execution.StartTime,$$.Execution.RoleArn)
+          Generate an array using States.Array:
+            Type: Pass
+            Parameters:
+              myArray.$: States.Array(1,2,3,4,5,6,7,8,9,10)
+            Next: Convert the array to JSON string using States.JsonToString
+          Convert the array to JSON string using States.JsonToString:
+            Type: Pass
+            Parameters:
+              mySerializedArray.$: States.JsonToString($.myArray)
+            Next: Convert JSON string bagk to array using Stats.StringToJson
+          Convert JSON string bagk to array using Stats.StringToJson:
+            Type: Pass
+            Parameters:
+              myArray.$: States.StringToJson($.mySerializedArray)
+            Next: Create Pets
+          Create Pets:
+            Type: Map
+            Iterator:
+              StartAt: Choice
+              States:
+                Choice:
+                  Type: Choice
+                  Choices:
+                  - And:
+                    - Variable: "$"
+                      IsNumeric: true
+                    - And:
+                      - Or:
+                        - Variable: "$"
+                          NumericEquals: 1
+                        - Variable: "$"
+                          NumericEquals: 3
+                        - Variable: "$"
+                          NumericEquals: 5
+                        - Variable: "$"
+                          NumericEquals: 7
+                        - Variable: "$"
+                          NumericEquals: 9
+                        - Variable: "$"
+                          NumericGreaterThan: 10
+                    Next: Create Dog
+                  - And:
+                    - Variable: "$"
+                      IsNumeric: true
+                    - And:
+                      - Or:
+                        - Variable: "$"
+                          NumericEquals: 2
+                        - Variable: "$"
+                          NumericEquals: 4
+                        - Variable: "$"
+                          NumericEquals: 6
+                        - Variable: "$"
+                          NumericEquals: 8
+                        - Variable: "$"
+                          NumericEquals: 10
+                    Next: Create Cat
+                Create Dog:
+                  Type: Pass
+                  Parameters:
+                    species: dog
+                    age.$: "$"
+                    createdBy.$: "$$.State.Name"
+                  End: true
+                Create Cat:
+                  Type: Pass
+                  Parameters:
+                    species: cat
+                    age.$: "$"
+                    createdBy.$: "$$.State.Name"
+                  End: true
+            ItemsPath: "$.myArray"
+            Next: Create separate list of cats and dogs using JSONPath Expressions
+            ResultSelector:
+              pets.$: "$"
+          Create separate list of cats and dogs using JSONPath Expressions:
+            Type: Pass
+            Parameters:
+              cats:
+                young.$: "$.pets[?(@.species == 'cat' && @.age<5)]"
+                old.$: "$.pets[?(@.species == 'cat' && @.age>=5)]"
+              dogs:
+                young.$: "$.pets[?(@.species == 'dog' && @.age<5)]"
+                old.$: "$.pets[?(@.species == 'dog' && @.age>=5)]"
+            Next: Add array of unique ages using JSONPath Expression
+          Add array of unique ages using JSONPath Expression:
+            Type: Pass
+            Parameters:
+              uniqueAges.$: "$..age"
+              pets.$: "$"
+            Next: Recreate Pet List Using JSONPath Expression
+          Recreate Pet List Using JSONPath Expression:
+            Type: Pass
+            End: true
+            Parameters:
+              uniqueAges.$: "$..age"
+              groupedPets.$: "$.pets"
+              flattenedPets.$: "$.pets[*][*][*]"
+
+
+ 

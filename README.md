@@ -1,6 +1,6 @@
 ## aws-stepfunctions-examples
 
-AWS Step Functions is an orchestration service for reliably executing multi-step processes using visual workflows. This repository includes detailed examples that will help you unlock the power of serverless workflow.
+AWS Step Functions is a low-code visual workflow service. This repository includes detailed examples that will help you unlock the power of serverless workflow.
 
 ## Examples and Supporting Blog Posts
 
@@ -17,6 +17,13 @@ In this example, you use [AWS Step Functions](https://aws.amazon.com/step-functi
 Blog Post: [Controlling concurrency in distributed systems using AWS Step Functions](https://aws.amazon.com/blogs/compute/controlling-concurrency-in-distributed-systems-using-aws-step-functions/)
 
 
+## Demos of Step Functions capabiltiies
+
+### ASL Demo
+
+This demo illustrates capabilties of ASL and [AWS Step Functions](https://aws.amazon.com/step-functions/) including Intrinsic Functions and JSON Path Processing.
+
+You can deploy this using SAM or independently as a CloudFormation template in AWS Console
 
 ## Security
 
