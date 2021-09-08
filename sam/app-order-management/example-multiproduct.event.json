@@ -1,0 +1,59 @@
+{
+    "version": "0",
+    "id": "4711a753-c17b-ae75-ef2f-83052eaf34d1",
+    "detail-type": "OrderCreated",
+    "source": "com.orders",
+    "account": "930527757451",
+    "time": "2021-05-15T21:38:43Z",
+    "region": "us-east-1",
+    "resources": [],
+    "detail": {
+      "order_id": 1073459984,
+      "shipping_id": "34VB5540K83",
+      "currency": "USD",
+      "created_at": "2019-10-16T16:05:09-04:00",
+      "price": {
+        "total_price": 24.62,
+        "item_price": 18.99,
+        "shipping": 2.99,
+        "taxes": 2.64
+      },
+      "tax_price": 2.64,
+      "products": [
+        {
+          "product_id": 788032119674292900,
+          "title": "Encrypt Everything Tshirt",
+          "sku": "encrypt-everything-tshirt",
+          "inventory_id": 23190823132,
+          "size": "medium",
+          "taxable": true,
+          "image_url": "https://img.mystore.test/encrypt-tshirt.jpg",
+          "weight": 200,
+          "weight_unit": "g"
+        },
+        {
+          "product_id": 308970707089325490,
+          "title": "Ninja Disguise Tshirt",
+          "sku": "ninja-disguise-tshirt",
+          "inventory_id": 67364783922,
+          "size": "medium",
+          "taxable": true,
+          "image_url": "https://img.mystore.test/ninja-disguise-tshirt.jpg",
+          "weight": 200,
+          "weight_unit": "g"
+        }
+      ],
+      "customer": {
+        "name": "John Doe",
+        "email": "john.doe@example.org",
+        "phone": "+1 604 123 1234"
+      },
+      "shipping_address": {
+        "street": "435 West Georgia St",
+        "city": "Vancouver",
+        "state": "British Columbia",
+        "zip_code": "V6B5M1",
+        "country": "Canada"
+      }
+    }
+  }

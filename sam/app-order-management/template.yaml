@@ -1,0 +1,130 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Order Shipping Example: An example of event-driven order shipping workflow"
+
+Resources:
+############### Test Infrastructure ###############################################
+  # Define a common IAM role to be used for all components of this app
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+                - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - events:*
+                - states:*
+                - sqs:*
+                - sns:publish
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - cloudwatch:PutMetricData
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - lambda:InvokeFunction
+                Resource: '*'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  StateMachineShipOrder:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/ship-order.asl.json
+      DefinitionSubstitutions:
+        LambdaGetCustomerStatus: !GetAtt LambdaGetCustomerStatus.Arn
+        LambdaReserveProduct: !GetAtt LambdaReserveProduct.Arn
+        PackageAndShipQueue: !Ref SQSForCallback
+        EventBusName: !GetAtt OrderProcessingEventBus.Name
+        SnsNewOrderTopic: !Ref SNSNewOrderForShipping
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: "Ship-Orders"
+
+  LambdaSQSCallbackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/sqscallbackfunction/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Role: !GetAtt ApplicationRole.Arn
+      Events:
+        SQSForCallback:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SQSForCallback.Arn
+            BatchSize: 1
+  
+  LambdaGetCustomerStatus:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/get_customer_status/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Role: !GetAtt ApplicationRole.Arn
+  LambdaReserveProduct:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/reserve_proudct/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Role: !GetAtt ApplicationRole.Arn
+  
+  OrderProcessingEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: order-service-bus
+  
+  SQSForCallback:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 60
+
+  SNSNewOrderForShipping:
+    Type: AWS::SNS::Topic
+    Properties: 
+      FifoTopic: false
+      TopicName: SNSNewOrderForShipping
+  
+  LogGroupStateMachines:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "", ["/aws/states/order-management-StateMachineLogs"]]
+
+ 

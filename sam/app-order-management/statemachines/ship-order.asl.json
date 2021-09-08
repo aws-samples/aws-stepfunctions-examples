@@ -1,0 +1,296 @@
+{
+    "Comment": "Handle new order events complete shipping.",
+    "StartAt": "Validate Input",
+    "States": {
+      "Validate Input": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Or": [
+              {
+                "Not": {
+                  "Variable": "$.detail.products[0]",
+                  "IsPresent": true
+                }
+              },
+              {
+                "Not": {
+                  "Variable": "$.detail-type",
+                  "IsPresent": true
+                }
+              },
+              {
+                "Not": {
+                  "Variable": "$.detail-type",
+                  "StringEquals": "OrderCreated"
+                }
+              }
+            ],
+            "Next": "Notify Invalid Input"
+          }
+        ],
+        "Default": "Get Customer Status"
+      },
+      "Get Customer Status": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "OutputPath": "$.Payload",
+        "Parameters": {
+          "FunctionName": "${LambdaGetCustomerStatus}",
+          "Payload.$": "$.detail.customer"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          },
+          {
+            "ErrorEquals": [
+              "States.ALL"
+            ],
+            "BackoffRate": 1,
+            "IntervalSeconds": 1,
+            "MaxAttempts": 5
+          }
+        ],
+        "Next": "Do Fraud Check"
+      },
+      "Do Fraud Check": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.status",
+            "StringEquals": "fraudulent",
+            "Next": "Notify Fraudulent Customer"
+          }
+        ],
+        "Default": "Notify New Order"
+      },
+      "Notify New Order": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::sns:publish",
+        "Parameters": {
+          "Message.$": "$$.Execution.Input",
+          "TopicArn": "${SnsNewOrderTopic}"
+        },
+        "Next": "Reserve Products"
+      },
+      "Reserve Products": {
+        "Type": "Map",
+        "Next": "Notify Products Reserved",
+        "Iterator": {
+          "StartAt": "Reserve Product",
+          "States": {
+            "Reserve Product": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "OutputPath": "$.Payload",
+              "Parameters": {
+                "Payload.$": "$",
+                "FunctionName": "${LambdaReserveProduct}"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "Next": "Choice"
+            },
+            "Choice": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.reservation_status",
+                  "StringEquals": "temporarily-unavailable",
+                  "Next": "Notify Delayed"
+                }
+              ],
+              "Default": "Reservation Successful"
+            },
+            "Reservation Successful": {
+              "Type": "Succeed"
+            },
+            "Notify Delayed": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::events:putEvents",
+              "Parameters": {
+                "Entries": [
+                  {
+                    "Detail": {
+                      "delay_reason": "Product Temporarily Un-Available",
+                      "product_id.$": "$.product_id",
+                      "order_id.$": "$$.Execution.Input.detail.order_id",
+                      "workflow_id.$": "$$.Execution.Id"
+                    },
+                    "DetailType": "OrderShippingDelayed",
+                    "EventBusName": "${EventBusName}",
+                    "Source": "com.orders.shipping"
+                  }
+                ]
+              },
+              "Next": "Wait for availability",
+              "ResultPath": null
+            },
+            "Wait for availability": {
+              "Type": "Wait",
+              "Seconds": 10,
+              "Next": "Reserve Product"
+            }
+          }
+        },
+        "ItemsPath": "$$.Execution.Input.detail.products",
+        "ResultPath": "$.reservations"
+      },
+      "Notify Products Reserved": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::events:putEvents",
+        "Parameters": {
+          "Entries": [
+            {
+              "Detail": {
+                "order_id.$": "$$.Execution.Input.detail.order_id",
+                "workflow_id.$": "$$.Execution.Id"
+              },
+              "DetailType": "OrderShippingProductsReserved",
+              "EventBusName": "${EventBusName}",
+              "Source": "com.orders.shipping"
+            }
+          ]
+        },
+        "Next": "Initate Packaging and Shipping",
+        "ResultPath": null
+      },
+      "Initate Packaging and Shipping": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+        "Parameters": {
+          "QueueUrl": "${PackageAndShipQueue}",
+          "MessageBody": {
+            "order_detail.$": "$$.Execution.Input.detail",
+            "reservations.$": "$.reservations",
+            "token.$": "$$.Task.Token"
+          }
+        },
+        "Next": "Notify Successful Shipping",
+        "TimeoutSeconds": 10800,
+        "Catch": [
+          {
+            "ErrorEquals": [
+              "States.TaskFailed"
+            ],
+            "Next": "Notify Packaging and Shipping Failed",
+            "ResultPath": "$.errors"
+          }
+        ]
+      },
+      "Notify Successful Shipping": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::events:putEvents",
+        "Parameters": {
+          "Entries": [
+            {
+              "Detail": {
+                "order_event.$": "$$.Execution.Input",
+                "workflow_id.$": "$$.Execution.Id"
+              },
+              "DetailType": "ShippingSuccessful",
+              "EventBusName": "${EventBusName}",
+              "Source": "com.orders.shipping"
+            }
+          ]
+        },
+        "Next": "Order Shipped Successfully",
+        "ResultPath": null
+      },
+      "Notify Packaging and Shipping Failed": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::events:putEvents",
+        "Parameters": {
+          "Entries": [
+            {
+              "Detail": {
+                "error_message": "PackagingAndShippingFailed",
+                "error_details.$": "$.errors",
+                "order_event.$": "$$.Execution.Input",
+                "workflow_id.$": "$$.Execution.Id"
+              },
+              "DetailType": "OrderShippingFailed",
+              "EventBusName": "${EventBusName}",
+              "Source": "com.orders.shipping"
+            }
+          ]
+        },
+        "Next": "Order Shipping Failed"
+      },
+      "Notify Fraudulent Customer": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::events:putEvents",
+        "Parameters": {
+          "Entries": [
+            {
+              "Detail": {
+                "error_message": "FraudulentCustomer",
+                "order_event.$": "$$.Execution.Input",
+                "workflow_id.$": "$$.Execution.Id"
+              },
+              "DetailType": "OrderShippingFailed",
+              "EventBusName": "${EventBusName}",
+              "Source": "com.orders.shipping"
+            }
+          ]
+        },
+        "Next": "Order Shipping Failed",
+        "ResultPath": null
+      },
+      "Order Shipping Failed": {
+        "Type": "Fail",
+        "Error": "order_shipping_failed"
+      },
+      "Order Shipped Successfully": {
+        "Type": "Succeed"
+      },
+      "Notify Invalid Input": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::events:putEvents",
+        "Parameters": {
+          "Entries": [
+            {
+              "Detail": {
+                "error_message": "InvalidInput",
+                "order_event.$": "$$.Execution.Input",
+                "workflow_id.$": "$$.Execution.Id"
+              },
+              "DetailType": "OrderShippingFailed",
+              "EventBusName": "${EventBusName}",
+              "Source": "com.orders.shipping"
+            }
+          ]
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "States.ALL"
+            ],
+            "BackoffRate": 1,
+            "IntervalSeconds": 1,
+            "MaxAttempts": 3
+          }
+        ],
+        "Next": "Order Shipping Failed",
+        "ResultPath": null
+      }
+    }
+  }
