@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Demo-video-transcription"
+
+Resources:
+  # Define a common IAM role to be used for all components of this app
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+                - "transcribe.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - transcribe:StartTranscriptionJob
+                - transcribe:GetTranscriptionJob
+                - translate:TranslateText
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - s3:*
+                Resource: '*'
+
+  # An S3 Bucket for the data processing
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:  
+      BucketName : !Join ["",[!Ref "AWS::AccountId","-",!Ref "AWS::Region","-video-transcription-example"]]
+
+  StateMachineProcessVideoFile:
+    Type: AWS::Serverless::StateMachine
+    Properties:    
+      Type: "STANDARD"
+      Role: !GetAtt ApplicationRole.Arn
+      Name: !Join ["",[!Ref "AWS::AccountId","-",!Ref "AWS::Region","-video-transcription-example"]]
+      DefinitionSubstitutions:
+          S3BucketName: !Ref DataBucket
+          ApplicationRoleArn: !GetAtt ApplicationRole.Arn
+      Definition:
+        Comment: A State Machine that processes a video file
+        StartAt: GetSampleVideo
+        States:
+          GetSampleVideo:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:s3:copyObject
+            Parameters:
+              Bucket: "${S3BucketName}"
+              Key.$: "$.SampleDataInputKey"
+              CopySource.$: "States.Format('{}/{}',$.SampleDataBucketName,$.SampleDataInputKey)"
+            ResultPath: null
+            Next: StartTranscriptionJob
+          StartTranscriptionJob:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob
+            Parameters:
+              Media:
+                MediaFileUri.$: "States.Format('s3://${S3BucketName}/{}',$.SampleDataInputKey)"
+              TranscriptionJobName.$: "$$.Execution.Name"
+              LanguageCode: en-US
+              OutputBucketName: "${S3BucketName}"
+              OutputKey: transcribe.json
+            Next: Wait20Seconds
+          Wait20Seconds:
+            Type: Wait
+            Seconds: 20
+            OutputPath: "$.TranscriptionJob"
+            Next: CheckIfTranscriptionDone
+          CheckIfTranscriptionDone:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:transcribe:getTranscriptionJob
+            Parameters:
+              TranscriptionJobName.$: "$.TranscriptionJobName"
+            Next: IsTranscriptionDone?
+          IsTranscriptionDone?:
+            Type: Choice
+            Choices:
+            - Variable: "$.TranscriptionJob.TranscriptionJobStatus"
+              StringEquals: COMPLETED
+              Next: GetTranscriptionText
+            Default: Wait20Seconds
+          GetTranscriptionText:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:s3:getObject
+            Parameters:
+              Bucket: "${S3BucketName}"
+              Key: transcribe.json
+            ResultSelector:
+              filecontent.$: States.StringToJson($.Body)
+            Next: PrepareTranscriptTest
+          PrepareTranscriptTest:
+            Type: Pass
+            Parameters:
+              transcript.$: "$.filecontent.results.transcripts[0].transcript"
+            Next: StartTextTranslation
+          StartTextTranslation:
+            Type: Task
+            Resource: arn:aws:states:::aws-sdk:translate:translateText
+            Parameters:
+              SourceLanguageCode: en
+              TargetLanguageCode: es
+              Text.$: "$.transcript"
+            ResultPath: "$.translate"
+            End: true
+      Tracing:
+          Enabled: true
+      
