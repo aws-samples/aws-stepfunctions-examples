@@ -1,6 +1,6 @@
 # Flex Your Skills Contest - README
 
-The Flex Your Skills contest is your chance to show your creativity, ingenuity, and ability in AWS using Step Functions. With the release of AWS SDK Integration in Step Functions, (http://aws.amazon.com/blogs/aws/now-aws-step-functions-supports-200-aws-services-to-enable-easier-workflow-automation)supported integrations for AWS Services have increased from 17 to 200, and supported AWS API Actions have increased from 46 to over 9000. We believe this creates exciting new capabilities for developers and we want to see what you create.  
+The Flex Your Skills contest is your chance to show your creativity, ingenuity, and ability in AWS using Step Functions. With the release of AWS SDK Integration in Step Functions, (http://aws.amazon.com/blogs/aws/now-aws-step-functions-supports-200-aws-services-to-enable-easier-workflow-automation) supported integrations for AWS Services have increased from 17 to 200, and supported AWS API Actions have increased from 46 to over 9000. We believe this creates exciting new capabilities for developers and we want to see what you create.  
 
 *Contest Entries:*
 
