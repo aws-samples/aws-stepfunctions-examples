@@ -25,6 +25,12 @@ This demo illustrates capabilties of ASL and [AWS Step Functions](https://aws.am
 
 You can deploy this using SAM or independently as a CloudFormation template in AWS Console
 
+### Video Trasnscription with AWS SDK Service Integraitons ###
+
+In this demo, you learn how to use AWS SDK Service Integrations to build a video transcription workflow.
+
+Blog Post: [Now — AWS Step Functions Supports 200 AWS Services To Enable Easier Workflow Automation](https://github.com/aws-samples/aws-stepfunctions-examples/tree/main/sam/demo-video-transcription)
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
