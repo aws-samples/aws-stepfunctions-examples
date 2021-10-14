@@ -4,14 +4,14 @@ The Flex Your Skills contest is your chance to show your creativity, ingenuity, 
 
 *Contest Entries:*
 
-1. Navigate to the GitHub repo for the Flex Your Skills contest: https://github.com/aws-samples/aws-stepfunctions-examples/contests/2021-Q4_AWS-SDK-Examples 
+1. Navigate to the GitHub repo for the Flex Your Skills contest: https://github.com/aws-samples/aws-stepfunctions-examples/tree/main/contests/2021-Q4_AWS-SDK-Examples
 2. Create your best integration innovation in Step Functions using AWS SDK Integrations .
 3. Submit your entry in the 2021-Q4-AWS-SDK-Examples directory via a Pull Request (PR)
     1. Entries will only be accepted via PR in the main branch of this repo. 
     2. Entries must be submitted in the */contests/2021-Q4_AWS-SDK-Examples* directory.  
     3. Entries must be submitted as a either a SAM app (deploy-able with SAM CLI), CDK, or a standalone CloudFormation template.
-4. PRs will be automatically logged in the “AWS-SDK-flex-your-skills-contest” channel in gitter [link}.  Verify your PR in the gitter channel so you can be notified if you’ve won. 
-5. By submitting this pull request, you confirm that AWS can use, modify, copy, and redistribute this contribution, under the terms of our choice. 
+4. PRs will be automatically logged in the “aws-stepfunctions-examples” channel in gitter (https://gitter.im/aws-stepfunctions-examples/community).  
+5. Verify your PR is logged in the gitter channel so you can be notified if you’ve won.  
 
 
 *Terms and Conditions* 
