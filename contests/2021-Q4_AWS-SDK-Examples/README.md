@@ -16,7 +16,7 @@ The Flex Your Skills contest is your chance to show your creativity, ingenuity, 
 
 *Terms and Conditions* 
 
-By submitting your entry, you agree to be bound by the Flex Your Skills (“Contest”) Terms and Conditions.  NO PURCHASE NECESSARY.  VOID WHERE PROHIBITED. 
+By submitting your entry, you agree to be bound by the Flex Your Skills (“Contest”) Terms and Conditions.  NO PURCHASE NECESSARY.  VOID WHERE PROHIBITED.  Must be at least 18 years of age and live within the United States.  Amazon Web Services, Inc. (https://aws.amazon.com/legal/marketingentities/) (“*AWS*”), employees of AWS, and their immediate family members and members of their households are not eligible to participate.  Limit one entry per person.  
 
 From October 14, 2021 to November 19, 2021, submit your entry for a chance to win prizes, which include:
 
@@ -43,8 +43,6 @@ Additional Prizes:
 
 1. $25 in AWS Credits will be provided for up to two top entries per day during the Contest period, as selected by AWS judges 
 
-Must be at least 18 years of age. Excludes individuals living in Argentina, Brazil, France, Germany, Italy, Mexico, Philippines, Quebec, Russia, Spain, Thailand, Vietnam, Cuba, Iran, Syria, North Korea, and the region of Crimea. Participants must have Amazon Web Services and GitHub accounts to enter.  Amazon Web Services, Inc. (https://aws.amazon.com/legal/marketingentities/) (“*AWS*”), employees of AWS, and their immediate family members and members of their households are not eligible to participate.  Limit one entry per person. 
-
 Judging Criteria:
 All eligible entries received on or before November 12, 2021 will be judged and rated by a team of Step Functions and Serverless judges utilizing the following criteria:
 
@@ -63,3 +61,4 @@ Acceptance of prize by the winner constitutes permission for AWS to use winners�
 By submitting your submission to the Contest, you represent and warrant that your submission does not: (i) perform or promote activities that are illegal; (ii) violate or infringe the intellectual property, proprietary, or other rights of others; (iii) perform or promote activities that are offensive or disparaging in any manner; (iv) cause harm to others or to AWS’s operations or reputation; or (v) contain any of your or any third party’s personal information.
 
 The Contest is sponsored by AWS. AWS reserves the right to cancel or modify the Contest at any time and for any reason. AWS and its affiliates and licensors will not be liable to you under any cause of action or theory of liability relating to the Contest, even if a party has been advised of the possibility of such damages, for (a) indirect, incidental, special, consequential, or exemplary damages, or (b) lost profits, revenues, customers, opportunities, or goodwill. In any case, AWS and its affiliates’ and licensors’ aggregate liability under these Terms and Conditions will not exceed USD $100. The limitations in this paragraph shall apply only to the maximum extent permitted by applicable law.
+
