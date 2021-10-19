@@ -10,7 +10,7 @@ States:
     Type: Parallel
     Next: Identity check completed
     ResultSelector: 
-      indentityChecked.$: '$[0].indentityChecked'
+      identityChecked.$: '$[0].identityChecked'
       agencyChecked.$: '$[1].agencyChecked'
       customerName.$: '$[0].customerName'
       customerAddress.$: '$[0].customerAddress'
@@ -23,7 +23,7 @@ States:
               Validate name & address – check customer identity.
             Type: Pass
             Result: true
-            ResultPath: $.indentityChecked
+            ResultPath: $.identityChecked
             End: true 
       - 
         StartAt: Agency security clearance
