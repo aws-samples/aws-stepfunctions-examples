@@ -1,0 +1,324 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Sample SAM Template for demo-forecast-service-integration
+Resources:
+  S3DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName : !Join ["",[!Ref "AWS::AccountId","-",!Ref "AWS::Region","-sf-forecast-workflow"]]
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  ForecastRole:
+        Type: 'AWS::IAM::Role'
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                  - Effect: Allow
+                    Principal:
+                        Service:
+                            - forecast.amazonaws.com
+                    Action:
+                        - 'sts:AssumeRole'
+            ManagedPolicyArns:
+                - arn:aws:iam::aws:policy/AmazonForecastFullAccess
+                - arn:aws:iam::aws:policy/AmazonS3FullAccess
+  StepFunctionsPolicy:
+      Type: 'AWS::IAM::ManagedPolicy'
+      Properties:
+          Description: Step function use policy
+          PolicyDocument:  >
+              {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                      {
+                          "Effect": "Allow",
+                          "Action": [
+                              "xray:PutTraceSegments",
+                              "xray:PutTelemetryRecords",
+                              "xray:GetSamplingRules",
+                              "xray:GetSamplingTargets"],
+                          "Resource": [
+                              "*"
+                          ]
+                      }
+                  ]
+              }
+  StepFunctionsRole:
+      Type: AWS::IAM::Role
+      Properties:
+          AssumeRolePolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Principal:
+                      Service:
+                          - states.amazonaws.com
+                  Action:
+                      - 'sts:AssumeRole'
+          ManagedPolicyArns:
+          - !Ref StepFunctionsPolicy
+          - arn:aws:iam::aws:policy/AmazonForecastFullAccess
+          - arn:aws:iam::aws:policy/AmazonS3FullAccess
+          Path: /
+  ForecastWorkflowStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineType: STANDARD
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      TracingConfiguration:
+          Enabled: true
+      DefinitionSubstitutions:
+        S3DataBucket: !Ref S3DataBucket
+        S3DataBucketInputKey: 'data/item-demand-time.csv'
+        ForecastRole: !GetAtt ForecastRole.Arn
+      Definition:
+        Comment: An automation Pipeline for Amazon Forecast.
+        StartAt: Create-Dataset
+        States:
+          Create-Dataset:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:createDataset'
+            Parameters:
+              DatasetName.$: 'States.Format(''{}_target'', $.ProjectName)'
+              DatasetType: TARGET_TIME_SERIES
+              DataFrequency: H
+              Domain: CUSTOM
+              Schema:
+                Attributes:
+                  - AttributeName: timestamp
+                    AttributeType: timestamp
+                  - AttributeName: target_value
+                    AttributeType: float
+                  - AttributeName: item_id
+                    AttributeType: string
+            ResultPath: $.createDatasetResult
+            Next: Import-Data
+          Import-Data:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:createDatasetImportJob'
+            Parameters:
+              DatasetImportJobName.$: 'States.Format(''{}_import'', $.ProjectName)'
+              DatasetArn.$: $.createDatasetResult.DatasetArn
+              DataSource:
+                S3Config:
+                  Path: 's3://${S3DataBucket}/${S3DataBucketInputKey}'
+                  RoleArn: '${ForecastRole}'
+              TimestampFormat: 'yyyy-MM-dd hh:mm:ss'
+            ResultPath: $.createDatasetImportJobResult
+            Next: Create-DatasetGroup
+          Create-DatasetGroup:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:createDatasetGroup'
+            Parameters:
+              DatasetGroupName.$: 'States.Format(''{}'', $.ProjectName)'
+              DatasetArns.$: States.Array($.createDatasetResult.DatasetArn)
+              Domain: CUSTOM
+            ResultPath: $.createDatasetGroupResult
+            Next: Check-Data-Import
+          Check-Data-Import:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:describeDatasetImportJob'
+            Parameters:
+              DatasetImportJobArn.$: $.createDatasetImportJobResult.DatasetImportJobArn
+            ResultPath: $.describeDatasetImportJobResult
+            Next: Fork-Data-Import
+          Fork-Data-Import:
+            Type: Choice
+            Choices:
+              - Variable: $.describeDatasetImportJobResult.Status
+                StringEquals: ACTIVE
+                Next: Done-Data-Import
+            Default: Wait-Data-Import
+          Wait-Data-Import:
+            Type: Wait
+            Seconds: 60
+            Next: Check-Data-Import
+          Done-Data-Import:
+            Type: Pass
+            Next: Create-Predictor
+          Create-Predictor:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:createPredictor'
+            Parameters:
+              PredictorName.$: 'States.Format(''{}_predictor'', $.ProjectName)'
+              InputDataConfig:
+                DatasetGroupArn.$: $.createDatasetGroupResult.DatasetGroupArn
+              AlgorithmArn: 'arn:aws:forecast:::algorithm/NPTS'
+              ForecastHorizon: 24
+              PerformAutoML: false
+              PerformHPO: false
+              EvaluationParameters:
+                NumberOfBacktestWindows: 1
+                BackTestWindowOffset: 24
+              FeaturizationConfig:
+                ForecastFrequency: H
+                Featurizations:
+                  - AttributeName: target_value
+                    FeaturizationPipeline:
+                      - FeaturizationMethodName: filling
+                        FeaturizationMethodParameters:
+                          frontfill: none
+                          middlefill: zero
+                          backfill: zero
+            ResultPath: $.createPredictorResult
+            Next: Backtest-Export
+          Backtest-Export:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:createPredictorBacktestExportJob'
+            Parameters:
+              PredictorBacktestExportJobName.$: 'States.Format(''{}_backtestexport'', $.ProjectName)'
+              PredictorArn.$: $.createPredictorResult.PredictorArn
+              Destination:
+                S3Config:
+                  Path: 's3://${S3DataBucket}/forecast_results/backtestexport/'
+                  RoleArn: '${ForecastRole}'
+            ResultPath: $.createPredictorBacktestExportJobResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 180
+                BackoffRate: 1
+                MaxAttempts: 100
+            Next: Create-Forecast
+          Create-Forecast:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:createForecast'
+            Parameters:
+              ForecastName.$: 'States.Format(''{}_forecast'', $.ProjectName)'
+              PredictorArn.$: $.createPredictorResult.PredictorArn
+            ResultPath: $.createForecastResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 180
+                BackoffRate: 1
+                MaxAttempts: 100
+            Next: Forecast-Export
+          Forecast-Export:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:createForecastExportJob'
+            Parameters:
+              ForecastExportJobName.$: 'States.Format(''{}_forecastexport'', $.ProjectName)'
+              ForecastArn.$: $.createForecastResult.ForecastArn
+              Destination:
+                S3Config:
+                  Path: 's3://${S3DataBucket}/forecast_results/forecast/'
+                  RoleArn: '${ForecastRole}'
+            ResultPath: $.createForecastExportJobResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 180
+                BackoffRate: 1
+                MaxAttempts: 100
+            Next: Clean-Up
+          Clean-Up:
+            Type: Pass
+            Next: Delete-Forecast-Export
+          Delete-Forecast-Export:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:deleteForecastExportJob'
+            Parameters:
+              ForecastExportJobArn.$: $.createForecastExportJobResult.ForecastExportJobArn
+            ResultPath: $.deleteForecastExportJobResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 10
+                BackoffRate: 1.1
+                MaxAttempts: 100
+            Next: Delete-Forecast
+          Delete-Forecast:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:deleteForecast'
+            Parameters:
+              ForecastArn.$: $.createForecastResult.ForecastArn
+            ResultPath: $.deleteForecastResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 10
+                BackoffRate: 1.1
+                MaxAttempts: 100
+            Next: Delete-Backtest
+          Delete-Backtest:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:deletePredictorBacktestExportJob'
+            Parameters:
+              PredictorBacktestExportJobArn.$: $.createPredictorBacktestExportJobResult.PredictorBacktestExportJobArn
+            ResultPath: $.deletePredictorBacktestExportJobResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 10
+                BackoffRate: 1.1
+                MaxAttempts: 100
+            Next: Delete-Predictor
+          Delete-Predictor:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:deletePredictor'
+            Parameters:
+              PredictorArn.$: $.createPredictorResult.PredictorArn
+            ResultPath: $.deletePredictorResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 10
+                BackoffRate: 1.1
+                MaxAttempts: 100
+            Next: Delete-Import
+          Delete-Import:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:deleteDatasetImportJob'
+            Parameters:
+              DatasetImportJobArn.$: $.createDatasetImportJobResult.DatasetImportJobArn
+            ResultPath: $.deleteDatasetImportJobResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 10
+                BackoffRate: 1.1
+                MaxAttempts: 100
+            Next: Delete-Dataset
+          Delete-Dataset:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:deleteDataset'
+            Parameters:
+              DatasetArn.$: $.createDatasetResult.DatasetArn
+            ResultPath: $.deleteDatasetResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 10
+                BackoffRate: 1.1
+                MaxAttempts: 100
+            Next: Delete-DatasetGroup
+          Delete-DatasetGroup:
+            Type: Task
+            Resource: 'arn:aws:states:::aws-sdk:forecast:deleteDatasetGroup'
+            Parameters:
+              DatasetGroupArn.$: $.createDatasetGroupResult.DatasetGroupArn
+            ResultPath: $.deleteDatasetGroupResult
+            Retry:
+              - ErrorEquals:
+                  - Forecast.ResourceInUseException
+                IntervalSeconds: 10
+                BackoffRate: 1.1
+                MaxAttempts: 100
+            Next: SuccessState
+          SuccessState:
+            Type: Succeed
+
+
+
+Outputs:
+  S3DataBucket:
+    Description: "Name of S3 Data bucket used by Amazon Forecast Workflow Step function"
+    Value: !Ref S3DataBucket
