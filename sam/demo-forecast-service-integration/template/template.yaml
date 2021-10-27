@@ -14,6 +14,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
   ForecastRole:
         Type: 'AWS::IAM::Role'
         Properties:
