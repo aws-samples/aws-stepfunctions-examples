@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SAM Template for state machine to process pii and sentiment for an s3 object
+
+Globals:
+  Function:
+    Runtime: nodejs14.x    
+
+Resources:
+  AnalyzeDocumentTextStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: ./state-machines/document-text-analysis.asl.json
+      Role: !GetAtt AnalyzeDocumentTextStateMachineRole.Arn      
+      DefinitionSubstitutions:
+        HeadObject: !Sub arn:${AWS::Partition}:states:::aws-sdk:s3:headObject
+        LambdaInvoke: !Sub arn:${AWS::Partition}:states:::lambda:invoke        
+        GetObject: !Sub arn:${AWS::Partition}:states:::aws-sdk:s3:getObject
+        PutObject: !Sub arn:${AWS::Partition}:states:::aws-sdk:s3:putObject
+        DeleteObject: !Sub arn:${AWS::Partition}:states:::aws-sdk:s3:deleteObject
+        DetectPiiEntities: !Sub arn:${AWS::Partition}:states:::aws-sdk:comprehend:detectPiiEntities
+        DetectSentiment: !Sub arn:${AWS::Partition}:states:::aws-sdk:comprehend:detectSentiment
+        PublishSns: !Sub arn:${AWS::Partition}:states:::sns:publish
+        BucketName: !Ref AnalysisBucket
+        GetNextRangeFunction: !GetAtt GetNextRangeFunction.Arn
+        GetNextDocumentPartFunction: !GetAtt GetNextDocumentPartFunction.Arn
+        AdjustPiiOffsetsFunction: !GetAtt AdjustPiiOffsetsFunction.Arn
+        CalculateAverageSentimentFunction: !GetAtt CalculateAverageSentimentFunction.Arn
+        DocumentAnalysisCompletedTopic: !Ref DocumentAnalysisCompletedTopic
+
+  AnalyzeDocumentTextStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AnalyzeDocumentTextStateMachinePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - comprehend:DetectSentiment
+                  - comprehend:DetectPiiEntities
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Join ['', [!GetAtt AnalysisBucket.Arn, '/*']]
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref DocumentAnalysisCompletedTopic
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt GetNextDocumentPartFunction.Arn
+                  - !GetAtt GetNextRangeFunction.Arn
+                  - !GetAtt CalculateAverageSentimentFunction.Arn
+                  - !GetAtt AdjustPiiOffsetsFunction.Arn
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: 
+                  - !Join ['', [!GetAtt AnalysisBucket.Arn, '/analysis/*']]
+  
+  AnalysisBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true      
+      BucketName:
+        !Join [ '-', [ 'document-text-analysis', !Ref AWS::AccountId ] ]
+
+  GetNextDocumentPartFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: states/get-next-document-part
+      Handler: index.handler
+      Role: !GetAtt GetNextDocumentPartRole.Arn
+      Architectures: 
+        - arm64
+
+  GetNextDocumentPartRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  GetNextRangeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: states/get-next-range
+      Handler: index.handler
+      Role: !GetAtt GetNextRangeRole.Arn
+      Architectures: 
+        - arm64
+
+  GetNextRangeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  CalculateAverageSentimentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: states/calculate-average-sentiment
+      Handler: index.handler
+      Role: !GetAtt CalculateAverageSentimentRole.Arn
+      Architectures: 
+        - arm64
+
+  CalculateAverageSentimentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  AdjustPiiOffsetsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: states/adjust-pii-offsets
+      Handler: index.handler
+      Role: !GetAtt AdjustPiiOffsetsRole.Arn
+      Architectures: 
+        - arm64
+
+  AdjustPiiOffsetsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  DocumentAnalysisCompletedTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: DocumentAnalysisCompletedTopic
+
+  ComprehendServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - comprehend.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: ComprehendServiceRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - s3:PutObject
+                  - s3:GetObject                
+                Resource:
+                  - !Join ['', [!GetAtt AnalysisBucket.Arn, '/*']]
+              - Effect: Allow
+                Action: 
+                  - s3:ListBucket            
+                Resource:
+                  - !GetAtt AnalysisBucket.Arn

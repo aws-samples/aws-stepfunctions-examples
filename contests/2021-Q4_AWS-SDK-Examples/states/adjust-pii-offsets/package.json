@@ -1,0 +1,15 @@
+{
+  "name": "adjust-pii-offsets",
+  "version": "1.0.0",
+  "description": "Adjusts all the pii offsets to accommodate for multiple file parts",
+  "main": "index.js",
+  "dependencies": {},
+  "scripts": {
+    "coverage": "c8 npm test",
+    "test": "mocha tests/"
+  },
+  "devDependencies": {},
+  "files": [
+    "index.js"
+  ]
+}

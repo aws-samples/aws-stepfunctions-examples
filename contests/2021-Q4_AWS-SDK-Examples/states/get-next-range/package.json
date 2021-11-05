@@ -1,0 +1,15 @@
+{
+  "name": "get-next-range",
+  "version": "1.0.0",
+  "description": "Determines the next byte range to load for the document. Adds next part to parts array",
+  "main": "index.js",
+  "dependencies": {},
+  "scripts": {
+    "coverage": "c8 npm test",
+    "test": "mocha tests/"
+  },
+  "devDependencies": {},
+  "files": [
+    "index.js"
+  ]
+}

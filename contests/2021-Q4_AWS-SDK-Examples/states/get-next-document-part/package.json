@@ -1,0 +1,15 @@
+{
+  "name": "get-next-document-part",
+  "version": "1.0.0",
+  "description": "Gets the next part from part array, increments index, and adds sentiment and pii entities to results array",
+  "main": "index.js",
+  "dependencies": {},
+  "scripts": {
+    "coverage": "c8 npm test",
+    "test": "mocha tests/"
+  },
+  "devDependencies": {},
+  "files": [
+    "index.js"
+  ]
+}

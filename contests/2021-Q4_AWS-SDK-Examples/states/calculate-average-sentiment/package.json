@@ -1,0 +1,15 @@
+{
+  "name": "calculate-average-sentiment",
+  "version": "1.0.0",
+  "description": "Calculates the average sentiment across an array of sentiment results",
+  "main": "index.js",
+  "dependencies": {},
+  "scripts": {
+    "coverage": "c8 npm test",
+    "test": "mocha tests/"
+  },
+  "devDependencies": {},
+  "files": [
+    "index.js"
+  ]
+}

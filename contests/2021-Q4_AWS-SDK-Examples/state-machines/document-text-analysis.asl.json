@@ -1,0 +1,349 @@
+{
+  "Comment": "State machine designed to process text files and analyze them for pii entities and sentiment. See README for more details.",
+  "StartAt": "Get Object Metadata",
+  "States": {
+    "Get Object Metadata": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket": "${BucketName}",
+        "Key.$": "$.objectKey"
+      },
+      "Resource": "${HeadObject}",
+      "Next": "Set Initial Range Values",
+      "ResultPath": "$.object",
+      "ResultSelector": {
+        "size.$": "$.ContentLength"
+      }
+    },
+    "Set Initial Range Values": {
+      "Type": "Pass",
+      "Next": "Get Next Range",
+      "ResultPath": "$.values",
+      "Parameters": {
+        "fileSize.$": "$.object.size",
+        "fileName.$": "$.objectKey",
+        "rangeSize": 4950,
+        "startValue": 0,
+        "part": 0,
+        "parts": [],
+        "prefix": "analysis"
+      }
+    },
+    "Get Next Range": {
+      "Type": "Task",
+      "Resource": "${LambdaInvoke}",
+      "Parameters": {
+        "FunctionName": "${GetNextRangeFunction}",
+        "Payload": {
+          "startValue.$": "$.values.startValue",
+          "rangeSize.$": "$.values.rangeSize",
+          "fileSize.$": "$.values.fileSize",
+          "part.$": "$.values.part",
+          "prefix.$": "$.values.prefix",
+          "fileName.$": "$.values.fileName",
+          "parts.$": "$.values.parts"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Get Object At Range",
+      "ResultPath": "$.file",
+      "ResultSelector": {
+        "details.$": "$.Payload"
+      }
+    },
+    "Get Object At Range": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket": "${BucketName}",
+        "Key.$": "$.objectKey",
+        "Range.$": "States.Format('bytes={}-{}', $.values.startValue, $.file.details.next.end)"
+      },
+      "Resource": "${GetObject}",
+      "Next": "Save Object Part",
+      "ResultPath": "$.part",
+      "ResultSelector": {
+        "text.$": "$.Body"
+      }
+    },
+    "Save Object Part": {
+      "Type": "Task",
+      "Next": "Object Has More Parts?",
+      "Parameters": {
+        "Body.$": "$.part.text",
+        "Bucket": "${BucketName}",
+        "Key.$": "States.Format('analysis/{}/{}', $.objectKey, $.file.details.next.part)"
+      },
+      "Resource": "${PutObject}",
+      "ResultPath": null
+    },
+    "Object Has More Parts?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.file.details.next.end",
+          "NumericLessThanPath": "$.values.fileSize",
+          "Next": "Reset Range Values"
+        }
+      ],
+      "Default": "Format Data For Analysis"
+    },
+    "Format Data For Analysis": {
+      "Type": "Pass",
+      "Next": "Get Next Part",
+      "Parameters": {
+        "objectKey.$": "$.objectKey",
+        "parts.$": "$.file.details.parts",
+        "characterOffset": 0,
+        "index": 0,
+        "results": {
+          "piiEntities": [],
+          "sentiment": []
+        },
+        "piiEntities": [],
+        "sentiment": {}
+      },
+      "ResultPath": "$"
+    },
+    "Get Next Part": {
+      "Type": "Task",
+      "Resource": "${LambdaInvoke}",
+      "Parameters": {
+        "FunctionName": "${GetNextDocumentPartFunction}",
+        "Payload": {
+          "parts.$": "$.parts",
+          "index.$": "$.index",
+          "results.$": "$.results",
+          "sentiment.$": "$.sentiment",
+          "piiEntities.$": "$.piiEntities"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Format Part Data",
+      "ResultSelector": {
+        "details.$": "$.Payload"
+      },
+      "ResultPath": "$.part"
+    },
+    "Format Part Data": {
+      "Type": "Pass",
+      "Next": "Choice",
+      "Parameters": {
+        "objectKey.$": "$.objectKey",
+        "part": {
+          "details.$": "$.part.details.next"
+        },
+        "results.$": "$.part.details.results",
+        "characterOffset.$": "$.characterOffset",
+        "parts.$": "$.parts"
+      }
+    },
+    "Choice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.part.details.hasNext",
+          "BooleanEquals": true,
+          "Next": "Load Part From S3"
+        }
+      ],
+      "Default": "Calculate Average Sentiment"
+    },
+    "Load Part From S3": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket": "${BucketName}",
+        "Key.$": "$.part.details.key"
+      },
+      "Resource": "${GetObject}",
+      "ResultPath": "$.file",
+      "ResultSelector": {
+        "text.$": "$.Body"
+      },
+      "Next": "Analyze Part Text"
+    },
+    "Analyze Part Text": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "Detect Pii Entities",
+          "States": {
+            "Detect Pii Entities": {
+              "Type": "Task",
+              "Parameters": {
+                "LanguageCode": "en",
+                "Text.$": "$.file.text"
+              },
+              "Resource": "${DetectPiiEntities}",
+              "Next": "Filter Entities Below Threshold",
+              "ResultPath": "$.result"
+            },
+            "Filter Entities Below Threshold": {
+              "Type": "Pass",
+              "Parameters": {
+                "piiEntities.$": "$.result.Entities[?(@.Score > .85)]",
+                "characterOffset.$": "$.characterOffset",
+                "text.$": "$.file.text"
+              },
+              "Next": "Adjust Offsets"
+            },
+            "Adjust Offsets": {
+              "Type": "Task",
+              "Resource": "${LambdaInvoke}",
+              "Parameters": {
+                "FunctionName": "${AdjustPiiOffsetsFunction}",
+                "Payload.$": "$"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException"
+                  ],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 6,
+                  "BackoffRate": 2
+                }
+              ],
+              "End": true,
+              "ResultSelector": {
+                "piiEntities.$": "$.Payload"
+              }
+            }
+          }
+        },
+        {
+          "StartAt": "DetectSentiment",
+          "States": {
+            "DetectSentiment": {
+              "Type": "Task",
+              "Parameters": {
+                "LanguageCode": "en",
+                "Text.$": "$.file.text"
+              },
+              "Resource": "${DetectSentiment}",
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.analysis",
+      "Next": "Merge Analysis Data"
+    },
+    "Merge Analysis Data": {
+      "Type": "Pass",
+      "Parameters": {
+        "objectKey.$": "$.objectKey",
+        "index.$": "$.part.details.nextIndex",
+        "characterOffset.$": "$.analysis[0].piiEntities.characterOffset",
+        "parts.$": "$.parts",
+        "part.$": "$.part",
+        "piiEntities.$": "$.analysis[0].piiEntities.entities",
+        "sentiment": {
+          "overall.$": "$.analysis[1].Sentiment",
+          "score.$": "$.analysis[1].SentimentScore"
+        },
+        "results.$": "$.results"
+      },
+      "Next": "Remove Part From S3"
+    },
+    "Remove Part From S3": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket": "${BucketName}",
+        "Key.$": "$.part.details.key"
+      },
+      "Resource": "${DeleteObject}",
+      "ResultPath": null,
+      "Next": "Get Next Part"
+    },
+    "Calculate Average Sentiment": {
+      "Type": "Task",
+      "Resource": "${LambdaInvoke}",
+      "Parameters": {
+        "FunctionName": "${CalculateAverageSentimentFunction}",
+        "Payload": {
+          "sentimentResults.$": "$.results.sentiment"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Format Results",
+      "ResultPath": "$.sentiment",
+      "ResultSelector": {
+        "average.$": "$.Payload"
+      }
+    },
+    "Format Results": {
+      "Type": "Pass",
+      "Next": "Notify Subscribers Analysis Is Done",
+      "Parameters": {
+        "objectKey.$": "$.objectKey",
+        "piiEntities.$": "$.results.piiEntities",
+        "sentiment": {
+          "overall.$": "$.sentiment.average.sentiment",
+          "score.$": "$.sentiment.average.score"
+        }
+      }
+    },
+    "Notify Subscribers Analysis Is Done": {
+      "Type": "Task",
+      "Resource": "${PublishSns}",
+      "Parameters": {
+        "Message.$": "$",
+        "TopicArn": "${DocumentAnalysisCompletedTopic}"
+      },
+      "Next": "Success",
+      "ResultPath": null
+    },
+    "Success": {
+      "Type": "Succeed"
+    },
+    "Reset Range Values": {
+      "Type": "Pass",
+      "ResultPath": "$.values",
+      "Next": "Get Next Range",
+      "Parameters": {
+        "startValue.$": "$.file.details.next.start",
+        "rangeSize": 4950,
+        "fileSize.$": "$.values.fileSize",
+        "part.$": "$.file.details.next.part",
+        "prefix": "analysis",
+        "fileName.$": "$.values.fileName",
+        "parts.$": "$.file.details.parts"
+      }
+    }
+  }
+}
