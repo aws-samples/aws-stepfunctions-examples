@@ -318,6 +318,9 @@ platform for AWS DeepRacer real world competition Global Amazon Rekognition
 Custom Labels is not only optimize the network performance but also simplify the
 model management.
 
+## Project with Global Amazon Rekognition Custom Labels
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/JE0b36_3l9w/0.jpg)](https://www.youtube.com/watch?v=JE0b36_3l9w)
+
 Project collaborators include [Cyrus Wong](https://www.linkedin.com/in/cyruswong/) and [Pearly
 Law](https://www.linkedin.com/in/mei-ching-pearly-jean-law-172707171/) from the
 [IT114115 Higher Diploma in Cloud and Data Centre
