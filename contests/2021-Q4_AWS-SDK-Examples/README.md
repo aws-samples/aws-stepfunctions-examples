@@ -321,7 +321,5 @@ model management.
 ## Project with Global Amazon Rekognition Custom Labels
 [![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/JE0b36_3l9w/0.jpg)](https://www.youtube.com/watch?v=JE0b36_3l9w)
 
-Project collaborators include [Cyrus Wong](https://www.linkedin.com/in/cyruswong/) and [Pearly
-Law](https://www.linkedin.com/in/mei-ching-pearly-jean-law-172707171/) from the
-[IT114115 Higher Diploma in Cloud and Data Centre
+Project collaborators include [Cyrus Wong](https://www.linkedin.com/in/cyruswong/), [Or Man Yi](https://www.linkedin.com/in/man-yi-or-03699821b/), [Cheung Nga Yin](https://www.linkedin.com/in/nga-yin-cheung-64699721b/), [LUM Shing Fung](https://www.linkedin.com/in/shing-fung-lum-73162321b/), [Hui Man Chun](https://www.linkedin.com/in/man-chun-hui-79462021b/) and [Pearly Law](https://www.linkedin.com/in/mei-ching-pearly-jean-law-172707171/) from the [IT114115 Higher Diploma in Cloud and Data Centre
 Administration](http://www.vtc.edu.hk/admission/en/programme/it114115-higher-diploma-in-cloud-and-data-centre-administration/).
