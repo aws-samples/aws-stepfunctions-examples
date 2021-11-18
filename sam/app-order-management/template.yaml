@@ -111,16 +111,124 @@ Resources:
     Properties:
       Name: order-service-bus
   
+  SQSKey:
+    DeletionPolicy : Retain
+    Type: AWS::KMS::Key
+    Properties: 
+      Enabled: true
+      KeyPolicy: {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "Allow access through Simple Queue Service (SQS) for all principals in the account that are authorized to use SQS",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": "*"
+                },
+                "Action": [
+                    "kms:Encrypt",
+                    "kms:Decrypt",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKey*",
+                    "kms:CreateGrant",
+                    "kms:DescribeKey"
+                ],
+                "Resource": "*",
+                "Condition": {
+                    "StringEquals": {
+                        "kms:ViaService":  { "Fn::Join": [".",["sqs","Ref" : "AWS::Region","amazonaws.com"]]},
+                        "kms:CallerAccount": { "Ref" : "AWS::AccountId" }
+                    }
+                }
+            },
+            {
+                "Sid": "Allow direct access to key metadata to the account",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": {"Fn::Join": [":",["arn:aws:iam:","Ref" : "AWS::AccountId","root"]]}
+                },
+                "Action": [
+                    "kms:*"                  
+                ],
+                "Resource": "*"
+            }
+        ]
+    }
+  
+  SQSKeyAlias:
+    DependsOn: 
+      - SQSKey
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Join ["", ['alias/Stack-',!Ref AWS::StackName,'/sqs-key']]
+      TargetKeyId: 
+        Ref: SQSKey
+
   SQSForCallback:
     Type: AWS::SQS::Queue
     Properties:
       MessageRetentionPeriod: 60
+      KmsMasterKeyId: !Ref SQSKeyAlias
 
+  SNSKey:
+    DeletionPolicy : Retain
+    Type: AWS::KMS::Key
+    Properties: 
+      Enabled: true
+      KeyPolicy: {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "Allow access through SNS for all principals in the account that are authorized to use SNS",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": "*"
+                },
+                "Action": [
+                    "kms:Encrypt",
+                    "kms:Decrypt",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKey*",
+                    "kms:CreateGrant",
+                    "kms:DescribeKey"
+                ],
+                "Resource": "*",
+                "Condition": {
+                    "StringEquals": {
+                        "kms:ViaService":  { "Fn::Join": [".",["sns","Ref" : "AWS::Region","amazonaws.com"]]},
+                        "kms:CallerAccount": { "Ref" : "AWS::AccountId" }
+                    }
+                }
+            },
+            {
+                "Sid": "Allow direct access to key metadata to the account",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": {"Fn::Join": [":",["arn:aws:iam:","Ref" : "AWS::AccountId","root"]]}
+                },
+                "Action": [
+                    "kms:*"                  
+                ],
+                "Resource": "*"
+            }
+        ]
+    }
+  
+  SNSKeyAlias:
+    DependsOn: 
+      - SQSKey
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Join ["", ['alias/Stack-',!Ref AWS::StackName,'/sns-key']]
+      TargetKeyId: 
+        Ref: SNSKey
+      
   SNSNewOrderForShipping:
     Type: AWS::SNS::Topic
     Properties: 
       FifoTopic: false
       TopicName: SNSNewOrderForShipping
+      KmsMasterKeyId: !Ref SNSKeyAlias
   
   LogGroupStateMachines:
     Type: AWS::Logs::LogGroup
