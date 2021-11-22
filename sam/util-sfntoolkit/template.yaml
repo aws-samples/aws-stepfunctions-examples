@@ -1,0 +1,173 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "SFN Utils: Common utility state machines you can use to compose into bigger things."
+
+Parameters:
+  ParameterPrefix:
+    Type: String
+    Default: "SFN-Utils"
+    Description: "Prefix to be used in names of the things created by this stack."
+  
+
+Resources:
+  # Utility: Run a Glue Crawler and wait for completion
+  StateMachineUtilRunGlueCrawler:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterPrefix, "_Glue_RunCrawler"]]
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            -
+              Effect: Allow
+              Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+              - xray:GetSamplingRules
+              - xray:GetSamplingTargets
+              - glue:StartCrawler
+              - glue:GetCrawler
+              Resource: '*'
+      Definition:
+        Comment: A utility state machine to run a glue crawler and monitor it until completion
+        StartAt: StartCrawler
+        States:
+          StartCrawler:
+            Type: Task
+            Parameters:
+              Name.$: $.crawler_name
+            Resource: arn:aws:states:::aws-sdk:glue:startCrawler
+            Retry:
+              - ErrorEquals:
+                  - Glue.EntityNotFoundException
+                BackoffRate: 1
+                IntervalSeconds: 1
+                MaxAttempts: 0
+                Comment: EntityNotFoundException - Fail immediately
+              - ErrorEquals:
+                  - Glue.CrawlerRunningException
+                BackoffRate: 1
+                IntervalSeconds: 1
+                MaxAttempts: 0
+            Next: GetCrawler
+            ResultPath: $.response.start_crawler
+            Catch:
+              - ErrorEquals:
+                  - Glue.CrawlerRunningException
+                Next: GetCrawler
+                Comment: Crawler Already Running, just continue to monitor
+                ResultPath: $.response.start_crawler
+          GetCrawler:
+            Type: Task
+            Parameters:
+              Name.$: $.crawler_name
+            Resource: arn:aws:states:::aws-sdk:glue:getCrawler
+            ResultPath: $.response.get_crawler
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                BackoffRate: 2
+                IntervalSeconds: 1
+                MaxAttempts: 8
+            Next: Is Running?
+          Is Running?:
+            Type: Choice
+            Choices:
+              - Or:
+                  - Variable: $.response.get_crawler.Crawler.State
+                    StringEquals: RUNNING
+                  - Variable: $.response.get_crawler.Crawler.State
+                    StringEquals: STOPPING
+                Next: Wait for Crawler To Complete
+            Default: Prepare Output
+          Wait for Crawler To Complete:
+            Type: Wait
+            Seconds: 5
+            Next: GetCrawler
+          Prepare Output:
+            Type: Pass
+            End: true
+            Parameters:
+              crawler_name.$: $.crawler_name
+              LastCrawl.$: $.response.get_crawler.Crawler.LastCrawl
+
+  # Utility: Run all Glue Crawlers based on tags
+  StateMachineUtilRunGlueCrawlersWithTags:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterPrefix, "_Glue_RunGlueCrawlersWithTags"]]
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            -
+              Effect: Allow
+              Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+              - xray:GetSamplingRules
+              - xray:GetSamplingTargets
+              - events:PutTargets
+              - events:PutRule
+              - events:PutEvents
+              - events:DescribeRule
+              - glue:ListCrawlers
+              Resource: '*'
+            - 
+              Effect: Allow
+              Action:
+              - states:StartExecution
+              - states:DescribeExecution
+              Resource: !Ref StateMachineUtilRunGlueCrawler
+      Definition:
+        Comment: A utility state machine to run all Glue Crawlers that match tags
+        StartAt: Get Glue Crawler List
+        States:
+          Get Glue Crawler List:
+            Type: Task
+            Parameters:
+              Tags.$: $.tags 
+            Resource: arn:aws:states:::aws-sdk:glue:listCrawlers
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 5
+            OutputPath: $.CrawlerNames
+            Next: Run Glue Crawlers
+          Run Glue Crawlers:
+            Type: Map
+            Iterator:
+              StartAt: Run Glue Crawler
+              States:
+                Run Glue Crawler:
+                  Type: Task
+                  Resource: arn:aws:states:::states:startExecution.sync:2
+                  Parameters:
+                    StateMachineArn: !Ref StateMachineUtilRunGlueCrawler
+                    Input:
+                      crawler_name.$: $
+                  Retry:
+                    - ErrorEquals:
+                        - States.ALL
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 5
+                  Catch:
+                    - ErrorEquals:
+                        - States.ALL
+                      Next: Success
+                  Next: Success
+                Success:
+                  Type: Succeed
+            End: true
+            ResultPath: null
+ 
