@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: step-functions-local-testing
+
+Resources:
+  LocalTestingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/local_testing.asl.json
+      DefinitionSubstitutions:
+        CheckAddressFunctionArn: !GetAtt CheckAddressFunction.Arn
+        CheckIdentityFunctionArn: !GetAtt CheckIdentityFunction.Arn
+        FollowUpTableName: !Ref FollowUpTable
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CheckAddressFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CheckIdentityFunction
+        - DynamoDBWritePolicy:
+            TableName: !Ref FollowUpTable
+        - EventBridgePutEventsPolicy:
+            EventBusName: default
+        - ComprehendBasicAccessPolicy: {}
+
+  CheckIdentityFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/check-identity/
+      Handler: app.lambdaHandler
+      Runtime: nodejs14.x
+      Architectures:
+        - arm64
+
+  CheckAddressFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/check-address/
+      Handler: app.lambdaHandler
+      Runtime: nodejs14.x
+      Architectures:
+        - arm64
+
+  FollowUpTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: 'PK'
+          AttributeType: 'S'
+      KeySchema:
+        - AttributeName: 'PK'
+          KeyType: 'HASH'
+      BillingMode: PAY_PER_REQUEST
+
+Outputs:
+  LocalTestingStateMachineArn:
+    Description: "State machine ARN"
+    Value: !Ref LocalTestingStateMachine

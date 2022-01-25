@@ -1,0 +1,9 @@
+{
+  "name": "check_identity",
+  "version": "1.0.0",
+  "description": "Lambda Function to check Identity",
+  "main": "app.js",
+  "repository": "TODO",
+  "author": "SAM CLI",
+  "license": "MIT"
+}
