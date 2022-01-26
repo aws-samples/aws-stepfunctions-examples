@@ -285,6 +285,29 @@ Above command should show the results highlighting 3 failed attempts with a fina
 ]
 ```
 
+## Running all tests with few commands
+This sample application also provides a `makefile` which has all the required commands to run docker [`make run`], create state machine and execute tests [`make all`], and checking history [`make history`].
+
+On a terminal window, first start with running docker:
+
+```bash
+make run
+```
+
+On a different terminal window/tab, you can then run:
+
+```bash
+make all
+```
+
+Finally, you can check history of each execution by running:
+
+```bash
+make history
+```
+
+Check [`makefile`](./makefile) for details
+
 ## Deploy the sample application
 Step Functions Local with mock config provides a way to test a state machine in isolation. However, once testing is complete, state machine should show the same behavior as the tests when deployed in an AWS account and integrated with other AWS services. 
 
