@@ -6,9 +6,36 @@ Developers can provide a valid sample output from the service call API that is p
 
 Multiple testing scenarios can be handled in a `MockConfigFile.json`. Let's dive deeper to understand how it works.
 
-## Use Step Functions Local Mock Config
+## Overview of State Machine
 
-`MockConfigFile.json` has the following structure
+![StateMachine](./images/StateMachine.png)
+
+In this example, new sales leads are created in a customer relationship management system, triggering the sample workflow execution using input data as shown below, which provides information about the contact’s identity, address, and a free-form comment field.
+
+```json
+{
+  "data": {
+    "firstname": "Jane",
+    "lastname": "Doe",
+    "identity": {
+      "email": "jdoe@example.com",
+      "ssn": "123-45-6789"
+    },
+    "address": {
+      "street": "123 Main St",
+      "city": "Columbus",
+      "state": "OH",
+      "zip": "43219"
+    },
+    "comments": "I am glad to sign-up for this service. Looking forward to different options."
+  }
+}
+```
+
+Using the sales lead data, the workflow first validates the contact’s identity and address. If valid, it uses the Step Function’s AWS SDK Integration for Amazon Comprehend to call the `DetectSentiment` API using the sales lead’s comments as input for sentiment analysis. If the comments have a positive sentiment, the sales leads information is added to a DynamoDB for follow up and an event is published to Amazon EventBridge to notify subscribers. If the sales lead data is invalid or a negative sentiment is detected, events are published to EventBridge for notification, but no record is added to the Amazon DynamoDB table
+
+## Use Step Functions Local Mock Config
+The goal of Step Functions mock config is to test the above state machine in isolation without the need of actual AWS services integration. For this, Step Functions local uses `MockConfigFile.json` and it has the following structure:
 
 ![MockConfigFile](./images/MockConfigFile.png)
 
@@ -19,7 +46,7 @@ Multiple testing scenarios can be handled in a `MockConfigFile.json`. Let's dive
 5. Mapping of State (string match) with the supplied mock response
 6. Mock responses used by all of the state machines under test
 7. Mock Response string matching the value from #5
-8. Mock response for the first invocation of that state. Subsequent invocations can be referred as "1", "2", and so on. In case of retries, it can be referred as "0-2" (for 3 failed retries) and another json object with key "3" mocking the successful response. This is assuming that the state machine state has Retry block with `MaxRetries` set to 4
+8. Mock response for the first invocation of that state. Subsequent invocations can be referred as "1", "2", and so on. In case of retries, it can be referred as "0-2" (for 3 failed retries) and another json object with key "3" mocking the successful response. This is assuming that the state machine state has Retry block with `MaxRetries` set to 3
 9. Return the mock response that matches the expected response from the task (response is not validated by Step Functions Local)
 
 ### Prerequisites
@@ -63,7 +90,7 @@ Create the state machine in State Functions local:
 ```bash
 aws stepfunctions create-state-machine \
   --endpoint-url http://localhost:8083 \
-  --definition "$(cat ./statemachine/local_testing.asl.json)" \
+  --definition file://statemachine/local_testing.asl.json \
   --name "LocalTesting" \
   --role-arn "arn:aws:iam::123456789012:role/DummyRole"
 ```
@@ -79,7 +106,37 @@ aws stepfunctions start-execution \
   --endpoint http://localhost:8083 \
   --name executionWithHappyPathMockedServices \
   --state-machine arn:aws:states:us-east-1:123456789012:stateMachine:LocalTesting#HappyPathTest \
-  --input "$(cat ./events/sfn_valid_input.json)"
+  --input file://events/sfn_valid_input.json
+```
+
+**Validate Results**
+To validate the HappyPathTest test case, we want to verify that a TaskStateExited event exists for a task named *CustomerAddedToFollowup*, which can be confirmed using the following command.
+
+```bash
+aws stepfunctions get-execution-history \
+  --endpoint http://localhost:8083 \
+  --execution-arn arn:aws:states:us-east-1:123456789012:execution:LocalTesting:executionWithHappyPathMockedServices \
+  --query 'events[?type==`TaskStateExited` && stateExitedEventDetails.name==`CustomerAddedToFollowup`]'
+```
+
+The command result confirms that the workflow execution successfully exited the *CustomerAddedToFollowup* task.
+
+```json
+[
+  {
+    "timestamp": "2022-01-13T09:22:06.422000-05:00",
+    "type": "TaskStateExited",
+    "id": 32,
+    "previousEventId": 31,
+    "stateExitedEventDetails": {
+      "name": "CustomerAddedToFollowup",
+      "output": "{\"statusCode\":200,\"Payload\":{\"statusCode\":200}}",
+      "outputDetails": {
+        "truncated": false
+      }
+    }
+  }
+]
 ```
 
 **Negative Sentiment Scenario**
@@ -91,7 +148,7 @@ aws stepfunctions start-execution \
   --endpoint http://localhost:8083 \
   --name executionWithNegativeSentimentMockedServices \
   --state-machine arn:aws:states:us-east-1:123456789012:stateMachine:LocalTesting#NegativeSentimentTest \
-  --input "$(cat ./events/sfn_valid_input.json)"
+  --input file://events/sfn_valid_input.json
 ```
 
 #### Error Scenario Testing
@@ -105,7 +162,7 @@ aws stepfunctions start-execution \
   --endpoint http://localhost:8083 \
   --name executionWithCatchCustomErrorPathMockedServices \
   --state-machine arn:aws:states:us-east-1:123456789012:stateMachine:LocalTesting#CustomValidationFailedCatchTest \
-  --input "$(cat ./events/sfn_valid_input.json)"
+  --input file://events/sfn_valid_input.json
 ```
 
 **Exception Path**
@@ -128,9 +185,112 @@ aws stepfunctions get-execution-history \
   --execution-arn arn:aws:states:us-east-1:123456789012:execution:LocalTesting:executionWithCatchRuntimeExceptionPathMockedServices
 ```
 
-## Deploy the sample application
+#### Retry on Service error with success
+In this last test case, we’ll return to the HappyPath use case in which both validation steps are successful and a positive sentiment is detected, however this time we want to test that the retry configuration on the *DetectSentiment* task works correctly if there are temporary issues communicating with the Comprehend's `DetectSentiment` API.  We can simulate this scenario by returning failed mock responses for the first three attempts to communicate with the Comprehend API and a successful mock response for the fourth attempts. The execution path for this test scenario is illustrated in the diagram below (the red and green numbers have been added). 0 represents the first execution of state, whereas 1, 2, and 3 represent the max retry attempts (`MaxAttempts`) in case of an `InternalServerException` from `DetectSentiment` API
 
-This application uses AWS SAM. Deploy the sample application in your AWS account in order to test the state machine from console. Run:
+
+![Retries](./images/Retries.png)
+
+The portion of `MockedResponses` that is important to focus here is:
+
+```json
+"DetectSentimentRetryOnErrorWithSuccess": {
+  "0-2": {
+    "Throw": {
+      "Error": "InternalServerException",
+      "Cause": "Server Exception while calling DetectSentiment API in Comprehend Service"
+    }
+  },
+  "3": {
+    "Return": {
+      "Sentiment": "POSITIVE",
+      "SentimentScore": {
+        "Mixed": 0.00012647535,
+        "Negative": 0.00008031699,
+        "Neutral": 0.0051454515,
+        "Positive": 0.9946478
+      }
+    }
+  }
+}
+```
+
+Now, run the corresponding test:
+
+```bash
+aws stepfunctions start-execution \
+  --endpoint http://localhost:8083 \
+  --name retryTestExecution \
+  --state-machine arn:aws:states:us-east-1:123456789012:stateMachine:LocalTesting#RetryOnServiceExceptionTest \
+  --input file://events/sfn_valid_input.json
+```
+
+followed by validating the execution history:
+
+```bash
+aws stepfunctions get-execution-history \
+  --endpoint http://localhost:8083 \
+  --execution-arn arn:aws:states:us-east-1:123456789012:execution:LocalTesting:retryTestExecution \
+  --query 'events[?(type==`TaskFailed` && taskFailedEventDetails.error==`InternalServerException`) || (type==`TaskSucceeded` && taskSucceededEventDetails.resource==`comprehend:detectSentiment`)]'
+```
+
+Above command should show the results highlighting 3 failed attempts with a final successful service call:
+
+```json
+[
+  {
+    "timestamp": "2022-01-25T17:24:32.276000-05:00",
+    "type": "TaskFailed",
+    "id": 19,
+    "previousEventId": 18,
+    "taskFailedEventDetails": {
+      "error": "InternalServerException",
+      "cause": "Server Exception while calling DetectSentiment API in Comprehend Service"
+    }
+  },
+  {
+    "timestamp": "2022-01-25T17:24:33.286000-05:00",
+    "type": "TaskFailed",
+    "id": 22,
+    "previousEventId": 21,
+    "taskFailedEventDetails": {
+      "error": "InternalServerException",
+      "cause": "Server Exception while calling DetectSentiment API in Comprehend Service"
+    }
+  },
+  {
+    "timestamp": "2022-01-25T17:24:34.291000-05:00",
+    "type": "TaskFailed",
+    "id": 25,
+    "previousEventId": 24,
+    "taskFailedEventDetails": {
+      "error": "InternalServerException",
+      "cause": "Server Exception while calling DetectSentiment API in Comprehend Service"
+    }
+  },
+  {
+    "timestamp": "2022-01-25T17:24:35.301000-05:00",
+    "type": "TaskSucceeded",
+    "id": 28,
+    "previousEventId": 27,
+    "taskSucceededEventDetails": {
+      "resourceType": "aws-sdk",
+      "resource": "comprehend:detectSentiment",
+      "output": "{\"data\":{\"firstname\":\"Jane\",\"lastname\":\"Doe\",\"identity\":{\"email\":\"jdoe@example.com\",\"ssn\":\"123-45-6789\"},\"address\":{\"street\":\"123 Main St\",\"city\":\"Columbus\",\"state\":\"OH\",\"zip\":\"43219\"},\"comments\":\"I am glad to sign-up for this service. Looking forward to different options.\"},\"results\":{\"sentimentAnalysis\":{\"Sentiment\":\"POSITIVE\",\"SentimentScore\":{\"Mixed\":1.2647535E-4,\"Negative\":8.031699E-5,\"Neutral\":0.0051454515,\"Positive\":0.9946478}}}}",
+      "outputDetails": {
+        "truncated": false
+      }
+    }
+  }
+]
+```
+
+## Deploy the sample application
+Step Functions Local with mock config provides a way to test a state machine in isolation. However, once testing is complete, state machine should show the same behavior as the tests when deployed in an AWS account and integrated with other AWS services. 
+
+You can deploy the sample application in AWS account, start the execution of Step Function, and verify the execution history. It should match with the execution history shown in tests.
+
+Deploy this sample application in your AWS account in order to test the state machine from console. Run:
 
 ```bash
 sam build && sam deploy --guided
@@ -142,8 +302,52 @@ For subsequent build and deploys:
 sam build && sam deploy
 ```
 
-## Cleanup
+To run the happy path scenario of the application using the AWS CLI, replace the state machine ARN from the output of the deployment steps:
 
+```bash
+aws stepfunctions start-execution \
+  --state-machine <StepFunctionArnHere> \
+  --input file://events/sfn_valid_input.json
+```
+
+You should see an output like:
+
+```json
+{
+  "executionArn": "arn:aws:states:us-east-1:123456789012:execution:LocalTestingStateMachine-asdf1234:2c9e4676-b2f6-4e80-994b-7611c4b4418d",
+  "startDate": "2022-01-13T16:29:47.471000-05:00"
+}
+```
+
+Now verify the output from the history of the execution, similar to verification done in local testing:
+
+```bash
+aws stepfunctions get-execution-history \
+  --execution-arn <ExecutionArnFromPreviousOutput> \
+  --query 'events[?type==`TaskStateExited` && stateExitedEventDetails.name==`CustomerAddedToFollowup`]'
+```
+
+should give result as:
+
+```json
+[
+  {
+    "timestamp": "2022-01-13T16:29:48.521000-05:00",
+    "type": "TaskStateExited",
+    "id": 32,
+    "previousEventId": 31,
+    "stateExitedEventDetails": {
+      "name": "CustomerAddedToFollowup",
+      "output": "{\"Entries\":[{\"EventId\":\"6e9bf7b4-13e2-097d-7555-f38cb7af12se\"}],\"FailedEntryCount\":0}",
+      "outputDetails": {
+        "truncated": false
+      }
+    }
+  }
+]
+```
+
+## Cleanup
 To cleanup the infrastructure:
 
 ```bash
