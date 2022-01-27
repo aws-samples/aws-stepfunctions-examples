@@ -39,10 +39,10 @@
     "CheckIdentityLambdaMockedSuccess": {
       "0": {
         "Return": {
-          "statusCode": 200,
+          "StatusCode": 200,
           "Payload": {
             "statusCode": 200,
-            "body": "{\"approved\": true}"
+            "body": "{\"approved\": true, \"message\": \"identity validation passed\"}"
           }
         }
       }
@@ -50,10 +50,10 @@
     "CheckAddressLambdaMockedSuccess": {
       "0": {
         "Return": {
-          "statusCode": 200,
+          "StatusCode": 200,
           "Payload": {
             "statusCode": 200,
-            "body": "{\"approved\": true}"
+            "body": "{\"approved\": true, \"message\": \"address validation passed\"}"
           }
         }
       }
@@ -61,7 +61,6 @@
     "AddToFollowUpSuccess": {
       "0": {
         "Return": {
-          "statusCode": 200,
           "SdkHttpMetadata": {
             "HttpStatusCode": 200
           }
@@ -71,7 +70,7 @@
     "CustomerAddedToFollowupSuccess": {
       "0": {
         "Return": {
-          "statusCode": 200,
+          "StatusCode": 200,
           "Payload": {
             "statusCode": 200
           }
@@ -97,7 +96,6 @@
     "CustomValidationFailedPutEventSuccess": {
       "0": {
         "Return": {
-          "statusCode": 200,
           "Payload": {
             "Entries": [
               {
@@ -112,7 +110,6 @@
     "ValidationExceptionPutEventSuccess": {
       "0": {
         "Return": {
-          "statusCode": 200,
           "Payload": {
             "Entries": [
               {
@@ -153,7 +150,6 @@
     "NegativeSentimentDetectedSuccess": {
       "0": {
         "Return": {
-          "statusCode": 200,
           "Payload": {
             "Entries": [
               {
