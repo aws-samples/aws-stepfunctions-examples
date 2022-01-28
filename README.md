@@ -16,12 +16,16 @@ In this example, you use [AWS Step Functions](https://aws.amazon.com/step-functi
 
 Blog Post: [Controlling concurrency in distributed systems using AWS Step Functions](https://aws.amazon.com/blogs/compute/controlling-concurrency-in-distributed-systems-using-aws-step-functions/)
 
+### Mocking service integrations with Step Functions Local
+In this example, you use AWS Step Functions' Local to test a state machine by mocking the service calls. You can find details in the example's [README](./sam/app-local-testing-mock-config/README.md) file.
 
-## Demos of Step Functions capabiltiies
+Blog Post: [Mocking service integrations with AWS Step Functions Local](https://aws.amazon.com/blogs/compute/mocking-service-integrations-with-aws-step-functions-local/)
+
+## Demos of Step Functions capabilities
 
 ### ASL Demo
 
-This demo illustrates capabilties of ASL and [AWS Step Functions](https://aws.amazon.com/step-functions/) including Intrinsic Functions and JSON Path Processing.
+This demo illustrates capabilities of ASL and [AWS Step Functions](https://aws.amazon.com/step-functions/) including Intrinsic Functions and JSON Path Processing.
 
 You can deploy this using SAM or independently as a CloudFormation template in AWS Console
 

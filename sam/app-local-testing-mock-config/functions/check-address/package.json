@@ -1,0 +1,9 @@
+{
+  "name": "check_address",
+  "version": "1.0.0",
+  "description": "Lambda Function to check address",
+  "main": "app.js",
+  "repository": "TODO",
+  "author": "SAM CLI",
+  "license": "MIT"
+}
