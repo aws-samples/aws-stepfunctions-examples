@@ -46,7 +46,7 @@ The goal of Step Functions mock config is to test the above state machine in iso
 5. Mapping of State (string match) with the supplied mock response
 6. Mock responses used by all of the state machines under test
 7. Mock Response string matching the value from #5
-8. Mock response for the first invocation of that state. Subsequent invocations can be referred as "1", "2", and so on. In case of retries, it can be referred as "0-2" (for 3 failed retries) and another json object with key "3" mocking the successful response. This is assuming that the state machine state has Retry block with `MaxRetries` set to 3
+8. Mock response for the first invocation of that state. Subsequent invocations can be referred as "1", "2", and so on. In case of retries, it can be referred as "0-2" (for 3 failed retries) and another json object with key "3" mocking the successful response. This is assuming that the state machine state has Retry block with `MaxAttempts` set to 3
 9. Return the mock response that matches the expected response from the task (response is not validated by Step Functions Local)
 
 ### Prerequisites
