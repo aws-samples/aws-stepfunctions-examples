@@ -23,6 +23,11 @@ Blog Post: [Mocking service integrations with AWS Step Functions Local](https://
 
 ## Demos of Step Functions capabilities
 
+### Demo Step Functions Local testing with Mock service integrations using Java testing frameworks (JUnit and Spock)
+In this demo, you can learn how to use JUnit or Spock to run Step Functions Local tests. This is helpful if your current serverless applications are built around Java. With this approach you can leverage the existing Java testing tools.
+
+[Demo App](./sam/demo-local-testing-using-java/README.md)
+
 ### ASL Demo
 
 This demo illustrates capabilities of ASL and [AWS Step Functions](https://aws.amazon.com/step-functions/) including Intrinsic Functions and JSON Path Processing.
