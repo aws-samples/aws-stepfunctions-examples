@@ -1,0 +1,28 @@
+plugins {
+  id 'groovy'
+  id 'java'
+}
+
+group 'org.example.sfn'
+version '1.0'
+
+repositories {
+  mavenLocal()
+  mavenCentral()
+}
+
+dependencies {
+  implementation 'org.codehaus.groovy:groovy:3.0.8'
+  implementation 'org.codehaus.groovy:groovy-json:3.0.8'
+  testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.2'
+  testImplementation 'org.slf4j:slf4j-api:2.0.0-alpha6'
+  testImplementation 'org.slf4j:slf4j-simple:2.0.0-alpha6'
+  testImplementation 'software.amazon.awssdk:sfn:2.17.121'
+  testImplementation "org.testcontainers:testcontainers:1.16.3"
+  testImplementation "org.testcontainers:junit-jupiter:1.16.3"
+  testImplementation "org.testcontainers:spock:1.16.3"
+}
+
+test {
+  useJUnitPlatform()
+}
