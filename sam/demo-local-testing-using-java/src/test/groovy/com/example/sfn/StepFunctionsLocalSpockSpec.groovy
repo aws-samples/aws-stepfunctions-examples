@@ -13,11 +13,13 @@ import software.amazon.awssdk.services.sfn.SfnClient
 import software.amazon.awssdk.services.sfn.model.*
 import spock.lang.Shared
 import spock.lang.Specification
+import spock.lang.Stepwise
 import spock.lang.Unroll
 
 import static com.example.sfn.StepFunctionsConstants.*
 import static software.amazon.awssdk.services.sfn.model.HistoryEventType.*
 
+@Stepwise
 @Testcontainers
 class StepFunctionsLocalSpockSpec extends Specification {
   private static final Logger log = LoggerFactory.getLogger(StepFunctionsLocalSpockSpec.class)
@@ -65,7 +67,7 @@ class StepFunctionsLocalSpockSpec extends Specification {
 
   @Unroll
   def "test #executionName scenario"() {
-    when:
+    when: 'Start state machine execution'
     StartExecutionResponse executionResponse = client.startExecution(StartExecutionRequest.builder()
       .stateMachineArn(String.join("#", stateMachineArn, testCaseName))
       .name(executionName)
@@ -75,31 +77,32 @@ class StepFunctionsLocalSpockSpec extends Specification {
 
     assert executionResponse.executionArn()
 
-    // IMP: Wait until above execution completes in docker
+    and: 'Wait until above execution completes in docker'
     Thread.sleep(timeout)
 
+    and: 'Gather execution history'
     GetExecutionHistoryResponse historyResponse = client.getExecutionHistory(GetExecutionHistoryRequest.builder()
       .executionArn(executionResponse.executionArn())
       .build() as GetExecutionHistoryRequest)
 
-    then:
+    then: 'History of events should not be empty'
     historyResponse?.events()
 
-    and:
+    and: 'Happy Path is executed'
     if (testCaseName == 'HappyPathTest') {
       assert resultSize == historyResponse.events().count {
         it.type() == TASK_STATE_EXITED && it.stateExitedEventDetails().name() == "CustomerAddedToFollowup"
       }
     }
 
-    and:
+    and: 'Negative Sentiment path is executed on detecting a negative sentiment'
     if (testCaseName == 'NegativeSentimentTest') {
       assert resultSize == historyResponse.events().count {
         it.type() == TASK_STATE_EXITED && it.stateExitedEventDetails().name() == "NegativeSentimentDetected"
       }
     }
 
-    and: "assert on number of retries"
+    and: "on service failure, exact number of retries performed"
     if (testCaseName == 'RetryOnServiceExceptionTest') {
       def results = historyResponse.events().findAll {
         (it.type() == TASK_FAILED && it.taskFailedEventDetails().error() == 'InternalServerException') ||
@@ -113,14 +116,14 @@ class StepFunctionsLocalSpockSpec extends Specification {
         "Last item in the result list should be the task success of type detect sentiment"
     }
 
-    and:
+    and: "in case of service exception, the exception is caught"
     if (testCaseName == 'ValidationExceptionCatchTest') {
       assert resultSize == historyResponse.events().count {
         it.type() == TASK_STATE_EXITED && it.stateExitedEventDetails().name() == "ValidationException"
       }
     }
 
-    and:
+    and: "in case of custom validation failure, custom validation error is captured"
     if (testCaseName == 'CustomValidationFailedCatchTest') {
       assert resultSize == historyResponse.events().count {
         it.type() == TASK_STATE_EXITED && it.stateExitedEventDetails().name() == "CustomValidationFailed"

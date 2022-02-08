@@ -137,7 +137,7 @@ public class StepFunctionsLocalJUnitTest {
       .build()
     );
 
-    // IMP: State Machine has retries with exponential backoff, therefore 6 seconds
+    // IMP: State Machine has retries with exponential backoff, therefore 4 seconds
     Thread.sleep(4000);
 
     GetExecutionHistoryResponse historyResponse = client.getExecutionHistory(GetExecutionHistoryRequest.builder()
