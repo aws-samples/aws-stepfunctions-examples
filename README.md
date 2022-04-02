@@ -21,6 +21,11 @@ In this example, you use AWS Step Functions' Local to test a state machine by mo
 
 Blog Post: [Mocking service integrations with AWS Step Functions Local](https://aws.amazon.com/blogs/compute/mocking-service-integrations-with-aws-step-functions-local/)
 
+### Orchestrating S3 Glacier Deep Archive object retrieval using Step Functions
+In this example, you use AWS Step Functions to orchestrate restoration of S3 objects from S3 Glacier Deep Archive. You can find details in the example's [README](./sam/app-glacier-deep-archive-retrieval/README.md) file.
+
+Blog Post: [Orchestrating S3 Glacier Deep Archive object retrieval using Step Functions](Blog Link Here)
+
 ## Demos of Step Functions capabilities
 
 ### Demo Step Functions Local testing with Mock service integrations using Java testing frameworks (JUnit and Spock)
