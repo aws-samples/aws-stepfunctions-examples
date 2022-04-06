@@ -37,7 +37,7 @@ To run the sample application, you need:
 Clone the repository, then run:
 
 ```bash
-cd sam/app-glacier-deep-archive-retrieval
+cd cdk/app-glacier-deep-archive-retrieval
 ```
 
 To deploy the application, run:
