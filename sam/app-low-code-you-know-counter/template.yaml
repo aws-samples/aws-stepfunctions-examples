@@ -1,0 +1,401 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Create resources for a project that counts the use of 'You Know' in a media file.
+  Uses Step Functions, S3, EventBridge, Transcribe, Athena
+
+Parameters:
+
+  GlueDatabaseYouKnowP:
+    Type: String
+    Description: Name of the Glue database
+    Default: you-know
+    
+  AthenaTableName:
+    Type: String
+    Default: manual_glue_table
+    
+  FillerPhrase:
+    Type: String
+    Default: 'you know'
+
+  AthenaQueryPreparedStatementName:
+    Type: String
+    Default: 'YouKnowResults'
+
+  AthenaWorkgroup:
+    Type: String
+    Default: 'primary'
+
+  AthenaDataCatalog:
+    Type: String
+    Default: 'AwsDataCatalog'
+
+Resources:
+
+  # Storage for the original media file, configured to send notifications to the EventBridge
+  TranscribeMediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bucket-${AWS::AccountId}-${AWS::Region}-you-know-media
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+  
+  # media bucket is configured to allow necessary access to the Transcribe and Step Functions services
+  TranscribeMediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Statement:
+          - Sid: TranscribeMediaReadPolicy
+            Effect: Allow
+            Principal:
+              Service: 'transcribe.amazonaws.com'
+            Action:
+            - s3:GetObject
+            Resource: !Join 
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref TranscribeMediaBucket
+                - /*
+          - Sid: TranscribeMediaReadPolicy
+            Effect: Allow
+            Principal:
+              Service: 'states.amazonaws.com'
+            Action:
+            - s3:GetObject
+            Resource: !Join 
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref TranscribeMediaBucket
+                - /*
+      Bucket: !Ref TranscribeMediaBucket
+      
+    
+  # Storage for the Transcribe job results
+  TranscribeResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bucket-${AWS::AccountId}-${AWS::Region}-you-know-results
+    
+  TranscribeResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Version: 2012-10-17
+        Statement:
+          - Sid: TranscribeMediaWritePolicy
+            Effect: Allow
+            Principal:
+              Service: 'transcribe.amazonaws.com'
+            Action:
+            - s3:PutObject
+            Resource: !Join 
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref TranscribeResultsBucket
+                - /*
+      Bucket: !Ref TranscribeResultsBucket
+    
+  # Storage for Athena query results
+  AthenaQueryResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bucket-${AWS::AccountId}-${AWS::Region}-you-know-athena-results
+
+  AthenaQueryResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      PolicyDocument:
+        Id: MyPolicy
+        Version: 2012-10-17
+        Statement:
+          - Sid: AthenaResultsWritePolicy
+            Effect: Allow
+            Principal:
+              Service: 'athena.amazonaws.com'
+            Action:
+            - s3:PutObject
+            Resource: !Join
+              - ''
+              - - 'arn:aws:s3:::'
+                - !Ref AthenaQueryResultsBucket
+                - /*
+      Bucket: !Ref AthenaQueryResultsBucket
+
+  # Step Function to invoke Transcribe with an Event Bridge rule to trigger the execution when an upload is detected to the media bucket
+  YouKnowTranscribeStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Events:
+        S3MediaTrigger:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: default
+            Pattern:
+              source:
+                - aws.s3
+              detail-type:
+                - "Object Created"
+              detail:
+                bucket:
+                  name:
+                    - !Ref TranscribeMediaBucket
+      Definition:
+        Comment: Invoke Transcribe on a media file, when complete execute the results query Step Function and output the results
+        StartAt: StartTranscriptionJob
+        TimeoutSeconds: 900
+        States:
+          StartTranscriptionJob:
+            Type: Task
+            Comment: Start a transcribe job on the provided media file
+            Parameters:
+              Media:
+                MediaFileUri.$: States.Format('s3://{}/{}', $.detail.bucket.name, $.detail.object.key)
+              TranscriptionJobName.$: "$.detail.object.key"
+              IdentifyLanguage: true
+              OutputBucketName: !Ref TranscribeResultsBucket
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:aws-sdk:transcribe:startTranscriptionJob'
+            Next: Wait
+          Wait:
+            Type: Wait
+            Seconds: 60
+            Next: GetTranscriptionJob
+          GetTranscriptionJob:
+            Type: Task
+            Comment: Retrieve the status of a Transcribe job
+            Parameters:
+              TranscriptionJobName.$: "$.TranscriptionJob.TranscriptionJobName"
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:aws-sdk:transcribe:getTranscriptionJob'
+            Next: TranscriptionJobStatus
+          TranscriptionJobStatus:
+            Type: Choice
+            Choices:
+            - Variable: "$.TranscriptionJob.TranscriptionJobStatus"
+              StringEquals: COMPLETED
+              Next: Success
+            - Variable: "$.TranscriptionJob.TranscriptionJobStatus"
+              StringEquals: FAILED
+              Next: Failed
+            Default: Wait
+          Success:
+            Type: Pass
+            Next: StartResultsExecution
+          Failed:
+            Type: Pass
+            End: true
+          StartResultsExecution:
+            Type: Task
+            Comment: Start the Results execution
+            Resource: 'arn:aws:states:::states:startExecution'
+            Parameters:
+              StateMachineArn: !GetAtt YouKnowResultsCounterStateMachine.Arn
+              Input:
+                TranscriptionJobName.$: $.TranscriptionJob.TranscriptionJobName
+                AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$: $$.Execution.Id
+            Next: WaitResults
+          WaitResults:
+            Type: Wait
+            Seconds: 60
+            Next: GetResultsExecutionStatus
+          GetResultsExecutionStatus:
+            Type: Task
+            Comment: Get the Results execution status
+            Resource: 'arn:aws:states:::aws-sdk:sfn:describeExecution'
+            Parameters:
+              ExecutionArn.$: $.ExecutionArn
+            Next: ResultsExecutionStatusCheck
+          ResultsExecutionStatusCheck:
+            Type: Choice
+            Choices:
+            - Variable: "$.Status"
+              StringMatches: SUCCEEDED
+              Next: QueryExecutionSuccess
+            - Variable: "$.Status"
+              StringMatches: RUNNING
+              Next: WaitResults
+            Default: QueryExecutionFailed
+          QueryExecutionFailed:
+            Type: Pass
+            End: true
+            Comment: Query execution failed
+          QueryExecutionSuccess:
+            Type: Pass
+            End: true
+            Comment: Query successfully completed
+            Parameters:
+              results.$: States.StringToJson($.Output)
+      Policies:
+        - S3ReadPolicy: {"BucketName": !Ref TranscribeMediaBucket}
+        - S3WritePolicy: {"BucketName": !Ref TranscribeResultsBucket}
+        - CloudWatchPutMetricPolicy: {}
+        - Version: "2012-10-17"
+          Statement:
+          - Sid: XrayAccessPolicy
+            Effect: Allow
+            Action:
+            - xray:PutTraceSegments
+            - xray:PutTelemetryRecords
+            - xray:GetSamplingRules
+            - xray:GetSamplingTargets
+            - xray:GetSamplingStatisticSummaries
+            Resource: '*'
+          - Sid: TranscribeJobPolicy
+            Effect: Allow
+            Action:
+            - transcribe:GetTranscriptionJob
+            - transcribe:StartTranscriptionJob
+            Resource: '*'
+          - Sid: ResultsExecutionPolicy
+            Effect: Allow
+            Action:
+            - states:StartExecution
+            Resource: !GetAtt YouKnowResultsCounterStateMachine.Arn
+          - Sid: ResultsExecutionStatusPolicy
+            Effect: Allow
+            Action:
+            - states:DescribeExecution
+            Resource:
+            - !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:*'
+
+  # Step Function to process the Transcribe output and count the phrase
+  YouKnowResultsCounterStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Definition:
+        Comment: Process the results of a Transcribe job using Athena to count occurrences of a phrase
+        StartAt: AthenaStartQueryExecutionUsingPreparedStatement
+        TimeoutSeconds: 900
+        States:
+          AthenaStartQueryExecutionUsingPreparedStatement:
+            Type: Task
+            Comment: Create an Athena prepared statement to query the transcription text
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:athena:startQueryExecution.sync'
+            Parameters:
+              QueryString.$: States.Format('execute YouKnowResults using \'{}\'',$.TranscriptionJobName)
+              WorkGroup: !Ref AthenaWorkgroup
+              QueryExecutionContext:
+                Database: transcribe-jobs
+                Catalog: !Ref AthenaDataCatalog
+              ResultConfiguration:
+                OutputLocation: !Join
+                  - ''
+                  - - 's3://'
+                    - !Ref AthenaQueryResultsBucket
+            Next: Athena GetQueryResults
+          Athena GetQueryResults:
+            Type: Task
+            Comment: Retrieve the result of the filler phrase counter
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:athena:getQueryResults'
+            Parameters:
+              MaxResults: 10
+              QueryExecutionId.$: "$.QueryExecution.QueryExecutionId"
+            End: true
+            ResultSelector:
+              count.$: $.ResultSet.Rows[1].Data[0].VarCharValue
+              phrase: !Sub ${FillerPhrase}
+      Policies:
+        - AthenaQueryPolicy: {"WorkGroupName": !Ref AthenaWorkgroup}
+        - CloudWatchPutMetricPolicy: {}
+        - S3ReadPolicy: {"BucketName": !Ref TranscribeResultsBucket}
+        - S3ReadPolicy: {"BucketName": !Ref AthenaQueryResultsBucket}
+        - S3WritePolicy: {"BucketName": !Ref AthenaQueryResultsBucket}
+        - Version: "2012-10-17"
+          Statement:
+          - Sid: XrayAccessPolicy
+            Effect: Allow
+            Action:
+            - xray:PutTraceSegments
+            - xray:PutTelemetryRecords
+            - xray:GetSamplingRules
+            - xray:GetSamplingTargets
+            - xray:GetSamplingStatisticSummaries
+            Resource: '*'
+          - Sid: TranscribeAthenaGluePolicy
+            Effect: Allow
+            Action:
+            - glue:GetDatabase
+            - glue:GetTable
+            Resource:
+            - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${GlueDatabaseYouKnow}'
+            - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${GlueDatabaseYouKnow}/${AthenaTable}'
+            - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog'
+          - Sid: TranscribeAthenaQueryPolicy
+            Effect: Allow
+            Action:
+            - athena:CreatePreparedStatement
+            - athena:StartQueryExecution
+            - athena:GetQueryExecution
+            - athena:GetQueryResults
+            - athena:GetDatabase
+            - athena:DeletePreparedStatement
+            - athena:GetPreparedStatement
+            Resource:
+            - !Sub 'arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:datacatalog/${AthenaDataCatalog}'
+            - !Sub 'arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkgroup}'
+
+  
+  # Create an AWS Glue database
+  GlueDatabaseYouKnow:
+    Type: AWS::Glue::Database
+    Properties:
+      # The database is created in the Data Catalog for your account
+      CatalogId: !Ref AWS::AccountId   
+      DatabaseInput:
+        # The name of the database is defined in the Parameters section above
+        Name: !Ref GlueDatabaseYouKnowP
+        Description: Database to hold tables for you know data
+        LocationUri: !Ref TranscribeResultsBucket
+
+  # Create the Athena table which describes the Transcribe results file
+  AthenaTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabaseYouKnow
+      TableInput:
+        Name: !Ref AthenaTableName
+        Parameters:
+          CrawlerSchemaDeserializerVersion': "1.0"
+          CrawlerSchemaSerializerVersion': "1.0"
+          classification': json
+          compressionType': none
+          typeOfData': file
+        StorageDescriptor:
+          BucketColumns: []
+          Columns:
+          - Name: jobname
+            Type: string
+          - Name: accountid
+            Type: string
+          - Name: results
+            Type: struct<language_code:string,transcripts:array<struct<transcript:string>>,language_identification:array<struct<score:string,code:string>>,items:array<struct<start_time:string,end_time:string,alternatives:array<struct<confidence:string,content:string>>,type:string>>>
+          - Name: status
+            Type: string
+          SerdeInfo:
+            Parameters:
+              paths: accountId,TranscriptionJobName,results,status
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+          Location: !Join 
+              - ''
+              - - 's3://'
+                - !Ref TranscribeResultsBucket
+                - /
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          
+  # Athena Prepared Statements allow parameters to be passed at run time. In this case the parameter is the name of the Transcription job results file to perform the query on.
+  ResultsQueryPreparedStatement:
+    Type: AWS::Athena::PreparedStatement
+    Properties:
+      Description: Create a statement that allows the use of a parameter for specifying a Transcribe job name in the Athena query
+      QueryStatement: !Sub >-
+        select cardinality(regexp_extract_all(results.transcripts[1].transcript, '${FillerPhrase}')) AS item_count from "${GlueDatabaseYouKnow}"."${AthenaTableName}" where jobname like ?
+      StatementName: !Ref AthenaQueryPreparedStatementName
+      WorkGroup: !Ref AthenaWorkgroup
