@@ -34,7 +34,7 @@ During deployment, SAM transforms and expands the SAM syntax into AWS CloudForma
 Those resources created include the following
 
 * S3 buckets for the media file and transcription results
-* Step Functions to process the media and produce the filler counter results
+* Step Function to process the media and produce the filler counter results
 * Glue table to describe the Transcribe results data used by an Athena query
 
 The AWS services and tools involved are as follows
@@ -48,25 +48,13 @@ The AWS services and tools involved are as follows
 
 ### Overview
 
-The entire process can be described as follows
-
-![project architecture diagram](./images/blog-you-know-counter-08.png)
-
-### AWS Step Functions
-
 The primary Step Function called YouKnowTranscribeStateMachine is used to orchestrate transcribe processing as follows.
 This implementation will use the Step Functions SDK for the StartTranscriptionJob task.
 The job id from that operation will be returned by the Transcribe service.
 An iteration loop will begin which will delay and check the status the Transcribe job in progress using the job id.
-When that job has successfully completed the results Step Function will be started.
-The results Step Function will configure and use the Amazon Athena service to analyze the output file produced by the Transcribe service.
-This portion of the process will also iterate until the results processing has successfully completed.
+When that job has successfully completed the Amazon Athena service is used to analyze the output file produced by the Transcribe service.
 
-![Transcribe Step Function Definition](./images/stepfunctions_graph-03.png)
-
-A second Step Function is also created which is used to orchestrate results processing. Note that the Transcribe Step Function will automatically invoke the Results Step Function while processing media files.
-
-![Results Step Function Definition](./images/stepfunctions_results_graph-03.png)
+![Transcribe Step Function Definition](./media/stepfunctions_graph_overview.png)
 
 ### Cost
 
@@ -94,8 +82,10 @@ For this walkthrough, you need
 
 1. You need an AWS access key ID and secret access key to configure the AWS Command Line Interface (AWS CLI). To learn more about configuring the AWS CLI, follow these instructions.
 2. Clone the repo:
-git clone git@github.com:dougtoppin/blog-sfn-youknowcounter.git
+git clone https://gitlab.aws.dev/toppaws/blog-you-know-counter.git
+3. After cloning, this is the folder structure:
 
+![folders](./media/repo-01.png)
 
 ### Deploy using Serverless Application Model (AWS SAM)
 
@@ -136,17 +126,15 @@ The [AWS Serverless Application Model (AWS SAM) CLI](https://aws.amazon.com/serv
 
 1. You can also view the output in [AWS CloudFormation](https://aws.amazon.com/cloudformation/) page
 
-   ![CloudFormation events](./images/cloudformation-01.png)
-
 1. Using the AWS S3 console, do a manual upload of a podcast episode such an mp3 file to the S3 media bucket which will be named bucket-{account number}-{region}-you-know-media
 
 1. Using the AWS Step Functions console, monitor the execution of the Transcribe Step Function
 
-   ![results state machine execution](./images/sfn-results-01.jpg)
+   ![state machine execution](./media/stepfunctions_graph_execution-wait.png)
 
-1. When the execution completes successfully select the *QueryExecutionSuccess* tasks to examine the output and see the filler phrase count
+1. When the execution completes successfully select the *AthenaGetQueryResults* task to examine the output and see the filler phrase count
 
-   ![results state machine output](./images/sfn-results-output-01.png)
+   ![state machine successful execution](./media/stepfunctions-success.png)
 
 1. The transcript text of the media file produced by the Transcribe service can be viewed by examining the results file in the results S3 bucket. Using the AWS S3 console, find the S3 bucket containing results, select the file matching the media name.
 
@@ -173,30 +161,26 @@ The associated policy will allow the Step Functions and Transcribe services, *st
 
 The *TranscribeResultsBucket* is configured by the associated policy to allow the Transcribe service to put results files in it.
 
-The Transcribe and Results Step Functions are created using the type *AWS::Serverless::StateMachine*.
+The Transcribe Step Function is created using the type *AWS::Serverless::StateMachine*.
 Note how the serverless transform, SAM, supports *EventBridgeRule* is configured as a part of the *YouKnowTranscribeStateMachine* and will emit an event to the EventBridge when a media file upload occurs.
 
 The *YouKnowTranscribeStateMachine* Step Function orchestrates the processing of uploaded media files.
 This has examples of using the *aws-sdk* to interact with the Transcribe service API.
 Without this, Lambda code would have to be written to perform these functions.
 
-The results Step Function is automatically started during the Transcribe Step Function execution using
-*arn:aws:states:::states:startExecution*.
-The *aws-sdk* is then used to monitor the Results Step Function execution via the *describeExecution* API.
-
 Amazon Athena is used for the transcript results queries.
 
 ### Cleaning up
 
-1. When finished with the tutorial, before the AWS resources can be deleted, you will need to empty the 3 S3 buckets that were created and delete any Transcribe jobs that were created, this is because the sam deletion function cannot delete those resources if content has been added to them.
+1. When finished with the tutorial, before the AWS resources can be deleted, you will need to empty the 3 S3 buckets that were created and delete any transcription jobs that were created, this is because the sam deletion function cannot delete those resources if content has been added to them.
 
 1. To delete the Amazon Transcribe jobs that were created, use the Transcribe console, select the jobs to be deleted and click the *delete* function
 
-   ![transription jobs cleanup](./images/cleanup-transcribe-01.png)
+   ![transcription job deletion](./media/cleanup-transcribe-01.png)
 
 1. Before the AWS resources can be deleted, the S3 buckets that were created must be emptied of their contents, use the Amazon S3 console and filter on *you-know* to get a list of the S3 buckets that were created and use the *Empty* function to empty the contents
 
-   ![project s3 buckets](./images/cleanup-s3-01.png)
+   ![bucket contents deletion](./media/cleanup-s3-01.png)
 
 1. To delete the AWS resources created, use the AWS cli at the shell, enter *sam delete* and confirm that you want to delete the resources that were created by this template.
 If the delete is attempted before emptying the S3 buckets and deleting the Transcribe jobs all of the resources except for the S3 buckets will be deleted and the S3 bucket deletion will fail with an error.

@@ -178,62 +178,50 @@ Resources:
             Choices:
             - Variable: "$.TranscriptionJob.TranscriptionJobStatus"
               StringEquals: COMPLETED
-              Next: Success
+              Next: AthenaStartQueryExecutionUsingPreparedStatement
             - Variable: "$.TranscriptionJob.TranscriptionJobStatus"
               StringEquals: FAILED
               Next: Failed
             Default: Wait
-          Success:
-            Type: Pass
-            Next: StartResultsExecution
           Failed:
-            Type: Pass
-            End: true
-          StartResultsExecution:
+            Type: Fail
+            Cause: 'transcription job failed'
+            Error: FAILED
+          AthenaStartQueryExecutionUsingPreparedStatement:
             Type: Task
-            Comment: Start the Results execution
-            Resource: 'arn:aws:states:::states:startExecution'
+            Comment: Create an Athena prepared statement to query the transcription text
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:athena:startQueryExecution.sync'
             Parameters:
-              StateMachineArn: !GetAtt YouKnowResultsCounterStateMachine.Arn
-              Input:
-                TranscriptionJobName.$: $.TranscriptionJob.TranscriptionJobName
-                AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$: $$.Execution.Id
-            Next: WaitResults
-          WaitResults:
-            Type: Wait
-            Seconds: 60
-            Next: GetResultsExecutionStatus
-          GetResultsExecutionStatus:
+              QueryString.$: States.Format('execute YouKnowResults using \'{}\'',$.TranscriptionJob.TranscriptionJobName)
+              WorkGroup: !Ref AthenaWorkgroup
+              QueryExecutionContext:
+                Database: transcribe-jobs
+                Catalog: !Ref AthenaDataCatalog
+              ResultConfiguration:
+                OutputLocation: !Join
+                  - ''
+                  - - 's3://'
+                    - !Ref AthenaQueryResultsBucket
+            Next: AthenaGetQueryResults
+          AthenaGetQueryResults:
             Type: Task
-            Comment: Get the Results execution status
-            Resource: 'arn:aws:states:::aws-sdk:sfn:describeExecution'
+            Comment: Retrieve the result of the filler phrase counter
+            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:athena:getQueryResults'
             Parameters:
-              ExecutionArn.$: $.ExecutionArn
-            Next: ResultsExecutionStatusCheck
-          ResultsExecutionStatusCheck:
-            Type: Choice
-            Choices:
-            - Variable: "$.Status"
-              StringMatches: SUCCEEDED
-              Next: QueryExecutionSuccess
-            - Variable: "$.Status"
-              StringMatches: RUNNING
-              Next: WaitResults
-            Default: QueryExecutionFailed
-          QueryExecutionFailed:
-            Type: Pass
+              MaxResults: 10
+              QueryExecutionId.$: "$.QueryExecution.QueryExecutionId"
             End: true
-            Comment: Query execution failed
-          QueryExecutionSuccess:
-            Type: Pass
-            End: true
-            Comment: Query successfully completed
-            Parameters:
-              results.$: States.StringToJson($.Output)
+            ResultSelector:
+              count.$: $.ResultSet.Rows[1].Data[0].VarCharValue
+              phrase: !Sub ${FillerPhrase}
       Policies:
         - S3ReadPolicy: {"BucketName": !Ref TranscribeMediaBucket}
+        - S3ReadPolicy: {"BucketName": !Ref TranscribeResultsBucket}
+        - S3ReadPolicy: {"BucketName": !Ref AthenaQueryResultsBucket}
         - S3WritePolicy: {"BucketName": !Ref TranscribeResultsBucket}
+        - S3WritePolicy: {"BucketName": !Ref AthenaQueryResultsBucket}
         - CloudWatchPutMetricPolicy: {}
+        - AthenaQueryPolicy: {"WorkGroupName": !Ref AthenaWorkgroup}
         - Version: "2012-10-17"
           Statement:
           - Sid: XrayAccessPolicy
@@ -250,73 +238,6 @@ Resources:
             Action:
             - transcribe:GetTranscriptionJob
             - transcribe:StartTranscriptionJob
-            Resource: '*'
-          - Sid: ResultsExecutionPolicy
-            Effect: Allow
-            Action:
-            - states:StartExecution
-            Resource: !GetAtt YouKnowResultsCounterStateMachine.Arn
-          - Sid: ResultsExecutionStatusPolicy
-            Effect: Allow
-            Action:
-            - states:DescribeExecution
-            Resource:
-            - !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:*'
-
-  # Step Function to process the Transcribe output and count the phrase
-  YouKnowResultsCounterStateMachine:
-    Type: AWS::Serverless::StateMachine
-    Properties:
-      Tracing:
-        Enabled: true
-      Definition:
-        Comment: Process the results of a Transcribe job using Athena to count occurrences of a phrase
-        StartAt: AthenaStartQueryExecutionUsingPreparedStatement
-        TimeoutSeconds: 900
-        States:
-          AthenaStartQueryExecutionUsingPreparedStatement:
-            Type: Task
-            Comment: Create an Athena prepared statement to query the transcription text
-            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:athena:startQueryExecution.sync'
-            Parameters:
-              QueryString.$: States.Format('execute YouKnowResults using \'{}\'',$.TranscriptionJobName)
-              WorkGroup: !Ref AthenaWorkgroup
-              QueryExecutionContext:
-                Database: transcribe-jobs
-                Catalog: !Ref AthenaDataCatalog
-              ResultConfiguration:
-                OutputLocation: !Join
-                  - ''
-                  - - 's3://'
-                    - !Ref AthenaQueryResultsBucket
-            Next: Athena GetQueryResults
-          Athena GetQueryResults:
-            Type: Task
-            Comment: Retrieve the result of the filler phrase counter
-            Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:athena:getQueryResults'
-            Parameters:
-              MaxResults: 10
-              QueryExecutionId.$: "$.QueryExecution.QueryExecutionId"
-            End: true
-            ResultSelector:
-              count.$: $.ResultSet.Rows[1].Data[0].VarCharValue
-              phrase: !Sub ${FillerPhrase}
-      Policies:
-        - AthenaQueryPolicy: {"WorkGroupName": !Ref AthenaWorkgroup}
-        - CloudWatchPutMetricPolicy: {}
-        - S3ReadPolicy: {"BucketName": !Ref TranscribeResultsBucket}
-        - S3ReadPolicy: {"BucketName": !Ref AthenaQueryResultsBucket}
-        - S3WritePolicy: {"BucketName": !Ref AthenaQueryResultsBucket}
-        - Version: "2012-10-17"
-          Statement:
-          - Sid: XrayAccessPolicy
-            Effect: Allow
-            Action:
-            - xray:PutTraceSegments
-            - xray:PutTelemetryRecords
-            - xray:GetSamplingRules
-            - xray:GetSamplingTargets
-            - xray:GetSamplingStatisticSummaries
             Resource: '*'
           - Sid: TranscribeAthenaGluePolicy
             Effect: Allow
@@ -340,7 +261,6 @@ Resources:
             Resource:
             - !Sub 'arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:datacatalog/${AthenaDataCatalog}'
             - !Sub 'arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkgroup}'
-
   
   # Create an AWS Glue database
   GlueDatabaseYouKnow:
