@@ -54,7 +54,7 @@ The job id from that operation will be returned by the Transcribe service.
 An iteration loop will begin which will delay and check the status the Transcribe job in progress using the job id.
 When that job has successfully completed the Amazon Athena service is used to analyze the output file produced by the Transcribe service.
 
-![Transcribe Step Function Definition](./media/stepfunctions_graph_overview.png)
+![Transcribe Step Function Definition](./images/stepfunctions_graph_overview.png)
 
 ### Cost
 
@@ -85,7 +85,7 @@ For this walkthrough, you need
 git clone https://gitlab.aws.dev/toppaws/blog-you-know-counter.git
 3. After cloning, this is the folder structure:
 
-![folders](./media/repo-01.png)
+![folders](./images/repo-01.png)
 
 ### Deploy using Serverless Application Model (AWS SAM)
 
@@ -130,11 +130,11 @@ The [AWS Serverless Application Model (AWS SAM) CLI](https://aws.amazon.com/serv
 
 1. Using the AWS Step Functions console, monitor the execution of the Transcribe Step Function
 
-   ![state machine execution](./media/stepfunctions_graph_execution-wait.png)
+   ![state machine execution](./images/stepfunctions_graph_execution-wait.png)
 
 1. When the execution completes successfully select the *AthenaGetQueryResults* task to examine the output and see the filler phrase count
 
-   ![state machine successful execution](./media/stepfunctions-success.png)
+   ![state machine successful execution](./images/stepfunctions-success.png)
 
 1. The transcript text of the media file produced by the Transcribe service can be viewed by examining the results file in the results S3 bucket. Using the AWS S3 console, find the S3 bucket containing results, select the file matching the media name.
 
@@ -176,11 +176,11 @@ Amazon Athena is used for the transcript results queries.
 
 1. To delete the Amazon Transcribe jobs that were created, use the Transcribe console, select the jobs to be deleted and click the *delete* function
 
-   ![transcription job deletion](./media/cleanup-transcribe-01.png)
+   ![transcription job deletion](./images/cleanup-transcribe-01.png)
 
 1. Before the AWS resources can be deleted, the S3 buckets that were created must be emptied of their contents, use the Amazon S3 console and filter on *you-know* to get a list of the S3 buckets that were created and use the *Empty* function to empty the contents
 
-   ![bucket contents deletion](./media/cleanup-s3-01.png)
+   ![bucket contents deletion](./images/cleanup-s3-01.png)
 
 1. To delete the AWS resources created, use the AWS cli at the shell, enter *sam delete* and confirm that you want to delete the resources that were created by this template.
 If the delete is attempted before emptying the S3 buckets and deleting the Transcribe jobs all of the resources except for the S3 buckets will be deleted and the S3 bucket deletion will fail with an error.
