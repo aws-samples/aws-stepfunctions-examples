@@ -176,11 +176,7 @@ Amazon Athena is used for the transcript results queries.
 
 1. To delete the Amazon Transcribe jobs that were created, use the Transcribe console, select the jobs to be deleted and click the *delete* function
 
-   ![transcription job deletion](./images/cleanup-transcribe-01.png)
-
 1. Before the AWS resources can be deleted, the S3 buckets that were created must be emptied of their contents, use the Amazon S3 console and filter on *you-know* to get a list of the S3 buckets that were created and use the *Empty* function to empty the contents
-
-   ![bucket contents deletion](./images/cleanup-s3-01.png)
 
 1. To delete the AWS resources created, use the AWS cli at the shell, enter *sam delete* and confirm that you want to delete the resources that were created by this template.
 If the delete is attempted before emptying the S3 buckets and deleting the Transcribe jobs all of the resources except for the S3 buckets will be deleted and the S3 bucket deletion will fail with an error.
