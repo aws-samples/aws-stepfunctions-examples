@@ -41,6 +41,10 @@ Resources:
       NotificationConfiguration:
         EventBridgeConfiguration:
           EventBridgeEnabled: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
   
   # media bucket is configured to allow necessary access to the Transcribe and Step Functions services
   TranscribeMediaBucketPolicy:
@@ -89,6 +93,10 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub bucket-${AWS::AccountId}-${AWS::Region}-you-know-results
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
     
   TranscribeResultsBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -126,6 +134,10 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub bucket-${AWS::AccountId}-${AWS::Region}-you-know-athena-results
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
 
   AthenaQueryResultsBucketPolicy:
     Type: AWS::S3::BucketPolicy
