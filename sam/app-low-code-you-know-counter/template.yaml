@@ -71,6 +71,16 @@ Resources:
               - - 'arn:aws:s3:::'
                 - !Ref TranscribeMediaBucket
                 - /*
+          - Sid: HttpsOnly
+            Action: s3:*
+            Effect: Deny
+            Principal: "*"
+            Resource:
+            - !Join ['',['arn:aws:s3:::',!Ref TranscribeMediaBucket,'/*']]
+            - !Join ['',['arn:aws:s3:::',!Ref TranscribeMediaBucket]]
+            Condition:
+              Bool:
+                aws:SecureTransport: false
       Bucket: !Ref TranscribeMediaBucket
       
     
@@ -98,6 +108,17 @@ Resources:
               - - 'arn:aws:s3:::'
                 - !Ref TranscribeResultsBucket
                 - /*
+          - Sid: HttpsOnly
+            Action: s3:*
+            Effect: Deny
+            Principal: "*"
+            Resource:
+            - !Join ['',['arn:aws:s3:::',!Ref TranscribeResultsBucket,'/*']]
+            - !Join ['',['arn:aws:s3:::',!Ref TranscribeResultsBucket]]
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
       Bucket: !Ref TranscribeResultsBucket
     
   # Storage for Athena query results
@@ -124,6 +145,16 @@ Resources:
               - - 'arn:aws:s3:::'
                 - !Ref AthenaQueryResultsBucket
                 - /*
+          - Sid: HttpsOnly
+            Action: s3:*
+            Effect: Deny
+            Principal: "*"
+            Resource:
+            - !Join ['',['arn:aws:s3:::',!Ref AthenaQueryResultsBucket,'/*']]
+            - !Join ['',['arn:aws:s3:::',!Ref AthenaQueryResultsBucket]]
+            Condition:
+              Bool:
+                aws:SecureTransport: false
       Bucket: !Ref AthenaQueryResultsBucket
 
   # Step Function to invoke Transcribe with an Event Bridge rule to trigger the execution when an upload is detected to the media bucket
