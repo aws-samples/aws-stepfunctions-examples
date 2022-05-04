@@ -9,14 +9,14 @@
         "Parameters": {
           "TableName": "${TableSemaphore}",
           "ExpressionAttributeNames":  {
-            "#lockowerid.$": "$.detail.executionArn"
+            "#lockownerid.$": "$.detail.executionArn"
           },
           "Key": {
             "LockName": {
               "S": "${LockName}"
             }
           },
-          "ProjectionExpression": "#lockowerid"
+          "ProjectionExpression": "#lockownerid"
         },
         "Retry": [ 
           {
@@ -53,7 +53,7 @@
         "Default": "Success State"
     },
     "Clean Up Lock": {
-      "Comment": "If this lockowerid is still there, then clean it up and release the lock",
+      "Comment": "If this lockownerid is still there, then clean it up and release the lock",
       "Type": "Task",
       "Resource": "arn:aws:states:::dynamodb:updateItem",
       "Parameters": {
