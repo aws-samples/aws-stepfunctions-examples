@@ -15,7 +15,7 @@ This post demonstrates how to automate testing for EventBridge events. It uses [
 
 ## Overview
 
-Using the [solution provided](https://gitlab.aws.dev/kazhura/eventbridge-event-tester) in this post users can track events from its inception to delivery and identify where any issues or errors are occurring. This solution is also customizable, and can incorporate integration tests against events to test pattern matching and transformations.
+Using the solution provided in this post users can track events from its inception to delivery and identify where any issues or errors are occurring. This solution is also customizable, and can incorporate integration tests against events to test pattern matching and transformations.
 
 ![full-solution](./assets/diagrams/full-solution.png)
 
