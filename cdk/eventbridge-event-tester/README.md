@@ -78,7 +78,7 @@ When the event is tested:
 1. The event status is updated to `SUCCESS` and the event metadata is saved to the `EventTracking` DynamoDB table.
 1. The transformed event payload is saved to the `TransformedEventPayload` S3 bucket.
 1. If there’s an error, EventBridge sends the event to the SQS DLQ.
-1. The Lambda function [ErrorHandler]./src/lambdas/error-handler/index.ts) polls the DLQ, and process the errors in batches.
+1. The Lambda function [ErrorHandler](./src/lambdas/error-handler/index.ts) polls the DLQ, and process the errors in batches.
 1. The event status is updated to `ERROR` and the event metadata is saved to the `EventTracking` DynamoDB table.
 1. The event payload is saved to the `TransformedEventPayload` S3 bucket.
 
@@ -117,7 +117,7 @@ In this implementation, the EventBridge `EventTester` can be used to periodicall
 1. The sampling rule is added to an existing event bus, and has the same pattern as the rule that is tested. This filters out events that are not processed by the tested rule.
 1. SQS queue is used for buffering.
 1. Lambda function processes events in batches, and can optionally implement sampling. For example, setting a `10%` sampling rate will take one random message out of 10 messages in a given batch.
-1. The event is tested against the endpoint provided. Note that the EventTesting rule is also provisioned via AWS CDK from the same code base as the tested rule. The tested rule is replicated into the EventTesting workflow.
+1. The event is tested against the endpoint provided. Note that the `EventTesting` rule is also provisioned via AWS CDK from the same code base as the tested rule. The tested rule is replicated into the `EventTesting` workflow.
 1. The result is returned to a Lambda function, and is then sent to CloudWatch Logs.
 1. A metric is set based on the number of `ERROR` responses in the logs.
 1. An alarm is configured when the `ERROR` metric crosses a provided threshold.
