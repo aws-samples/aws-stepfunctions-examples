@@ -150,7 +150,7 @@ git clone https://github.com/aws-samples/aws-stepfunctions-examples.git
 2. Navigate to the solution folder.
 
 ```zsh
-cd cdk/eventbridge-event-tester/
+cd aws-stepfunctions-examples/cdk/eventbridge-event-tester/
 ```
 
 3. Build the source files.
@@ -166,10 +166,11 @@ cd cdk/eventbridge-event-tester/
 cd cdk-app
 ```
 
-5. Set the event bus and the namespace you want to use. If you have an existing event bus you can provide the ARN, otherwise leave it blank to create a new event bus.
+5. Set the namespace you want to use. For example, `octank`.
 
 ```zsh
-NAMESPACE='<NAMESPACE>'
+# replace with a name relevant to you
+NAMESPACE='octank'
 ```
 
 6. Compile the stack and store the stake name in a variable.
@@ -244,7 +245,7 @@ transformer(): RuleTargetInput {
 API_URL=$(aws cloudformation describe-stacks \
 --stack-name $STACK_NAME \
 --query "Stacks[0].Outputs[?OutputKey=='ResourceStateChangedUrl'].OutputValue" \
---output)
+--output text)
 ```
 
 13. It is possible to add extra enpoints by creating a custom event that implements `IEventBridgeEvent` and  `ITestableEvent` interfaces. After that `StateMachineApiResource` has to be created:
@@ -349,7 +350,7 @@ cdk deploy $STACK_NAME \
 npm run test -- event-bridge --url=$API_URL --namespace=$NAMESPACE
 ```
 
-20. The test should fail this time. Inspect the response returned fromt he API:
+20. The test should fail this time. Inspect the response returned from the API:
 
 ```jsonc
 {
