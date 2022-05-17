@@ -1,0 +1,32 @@
+{
+  "name": "cdk-app",
+  "version": "0.1.0",
+  "bin": {
+    "cdk-app": "bin/cdk-app.js"
+  },
+  "scripts": {
+    "clean": "tsc --build --clean",
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "@types/axios": "^0.14.0",
+    "@types/jest": "^26.0.10",
+    "@types/minimist": "^1.2.2",
+    "@types/node": "10.17.27",
+    "aws-cdk": "2.17.0",
+    "axios": "^0.26.1",
+    "jest": "^26.4.2",
+    "minimist": "^1.2.6",
+    "ts-jest": "^26.2.0",
+    "ts-node": "^9.0.0",
+    "typescript": "~3.9.7"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.17.0",
+    "constructs": "^10.0.0",
+    "source-map-support": "^0.5.16"
+  }
+}
