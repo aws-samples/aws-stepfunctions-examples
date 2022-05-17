@@ -150,7 +150,7 @@ git clone https://github.com/aws-samples/aws-stepfunctions-examples.git
 2. Navigate to the solution folder.
 
 ```zsh
-cd cdk/eventbridge-event-tester/
+cd aws-stepfunctions-examples/cdk/eventbridge-event-tester/
 ```
 
 3. Build the source files.
@@ -166,10 +166,11 @@ cd cdk/eventbridge-event-tester/
 cd cdk-app
 ```
 
-5. Set the event bus and the namespace you want to use. If you have an existing event bus you can provide the ARN, otherwise leave it blank to create a new event bus.
+5. Set the namespace you want to use. For example, `octank`.
 
 ```zsh
-NAMESPACE='<NAMESPACE>'
+# replace with a name relevant to you
+NAMESPACE='octank'
 ```
 
 6. Compile the stack and store the stake name in a variable.
@@ -187,7 +188,7 @@ cdk deploy $STACK_NAME \
 --context eventStatusPollerWorkflowTimeout=10
 ```
 
-You shoudl receive an output similar to the following:
+You should receive an output similar to the following:
 
 ![cdk-output](./assets/img/cdk-output.png)
 
@@ -211,7 +212,7 @@ transformer(): RuleTargetInput {
 }
 ```
 
-9. Inspect the method content. Navigate to the event rule deployed by the stack. Go to Amazon EventBridge [console](https://console.aws.amazon.com/events/home). Select `Rules` under `Events`. Select the event bus deployed by the stack, and select the `Event Testing Rule`. Inpect the event pattern, it shoud look similar to the one below:
+9. Inspect the method content. Navigate to the event rule deployed by the stack. Go to Amazon EventBridge [console](https://console.aws.amazon.com/events/home). Select `Rules` under `Events`. Select the event bus deployed by the stack, and select the `Event Testing Rule`. Inspect the event pattern, it should look similar to the one below:
 
 ```jsonc
 {
@@ -238,16 +239,16 @@ transformer(): RuleTargetInput {
 
 11. Select `Targets` and click `view transformer`. inspect the transformer content and notice that it corresponds to the `transformer()` method of the [resource-state-changed-event.ts](./cdk-app/lib/events/impl/resource-state-changed-event.ts.ts).
 
-12. Store the test url for the event in the console variable:
+12. Store the test `url` for the event in the console variable:
 
 ```zsh
 API_URL=$(aws cloudformation describe-stacks \
 --stack-name $STACK_NAME \
 --query "Stacks[0].Outputs[?OutputKey=='ResourceStateChangedUrl'].OutputValue" \
---output)
+--output text)
 ```
 
-13. It is possible to add extra enpoints by creating a custom event that implements `IEventBridgeEvent` and  `ITestableEvent` interfaces. After that `StateMachineApiResource` has to be created:
+13. It is possible to add extra endpoints by creating a custom event that implements `IEventBridgeEvent` and `ITestableEvent` interfaces. After that `StateMachineApiResource` has to be created:
 
 ```typescript
 const event = eventFactory.customEvent(); // custom event implementation
@@ -300,7 +301,7 @@ npm run test -- event-bridge --url=$API_URL --namespace=$NAMESPACE
 
 ![cdk-test](./assets/img/cdk-test.png)
 
-The api response should be similar to the following
+The API response should be similar to the following
 
 ```jsonc
 {
@@ -349,7 +350,7 @@ cdk deploy $STACK_NAME \
 npm run test -- event-bridge --url=$API_URL --namespace=$NAMESPACE
 ```
 
-20. The test should fail this time. Inspect the response returned fromt he API:
+20. The test should fail this time. Inspect the response returned from the API:
 
 ```jsonc
 {
@@ -361,7 +362,7 @@ npm run test -- event-bridge --url=$API_URL --namespace=$NAMESPACE
 }
 ```
 
-21. The resason the test fails is because the event rule transfomer produces a payload that is not a valid `json` object. Inspect the `payload` string for further details.
+21. The reason behind the test failure is the event rule transformer. It produces a payload that is not a valid `json` object. Inspect the `payload` string for further details.
 
 ### Cleanup
 
@@ -373,7 +374,7 @@ To clean up the resources provisioned from the solution:
 cdk destroy $STACK_NAME
 ```
 
-2. Delete orphan CloudWatch logs. Navigate to Amazon CloudWatch [console](https://console.aws.amazon.com/cloudwatch/home). Select `Log groups` under `Logs`. Locate log groups created by the cdk. Log groups should start from `aws/lambda/EventTesterStack...`. For example:
+2. Delete orphan CloudWatch logs. Navigate to Amazon CloudWatch [console](https://console.aws.amazon.com/cloudwatch/home). Select `Log groups` under `Logs`. Locate log groups created by the `cdk`. Log groups should start from `aws/lambda/EventTesterStack...`. For example:
 
 ![cloud-watch-logs-clean-up](./assets/img/cw-cleanup.png)
 
