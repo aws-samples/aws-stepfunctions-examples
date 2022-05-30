@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Orechestrate AWS Glue Catalog table create/update based on the execution of Amazon Appflow flow.
+
+Parameters:
+  AWSGlueDatabaseNameParameter:
+    Type: String
+    Default: AppFlowDatabase
+    Description: Enter the name of the AWS Glue Database to use.
+
+Resources:
+
+  # CloudWatch Log Group
+  CreateCatalogTableLogs:
+    Type: AWS::Logs::LogGroup
+
+  # Step Function
+  CreateCatalogTable:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      # Logging is a good idea. We also need at least one policy attached to the Step
+      # Function in order to deploy.
+      Logging:
+        Level: ALL
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt CreateCatalogTableLogs.Arn
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - logs:*
+              - appflow:DescribeFlow
+              - glue:GetDatabase
+              - glue:GetTable
+              - glue:UpdateTable
+              - glue:GetPartition
+              - glue:CreatePartition
+              - glue:CreateTable
+              - glue:CreateDatabase
+            Resource: "*"
+      DefinitionUri: statemachines/CreateCatalogTable.json
+      DefinitionSubstitutions:
+        AWSGlueDatabaseName: !Ref AWSGlueDatabaseNameParameter
+      Events:
+        AppFlowEndFlowRun:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: default
+            Pattern:
+              source:
+                - aws.appflow
+              detail-type:
+                - "AppFlow End Flow Run Report"
+
+Outputs:
+
+  CreateCatalogTableArn:
+    Description: CreateCatalogTable state machine ARN
+    Value: !Ref CreateCatalogTable
