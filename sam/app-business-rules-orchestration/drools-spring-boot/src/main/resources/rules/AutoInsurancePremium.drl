@@ -1,0 +1,33 @@
+package com.example.orchestration.drools
+import com.example.orchestration.drools.vo.Driver;
+import com.example.orchestration.drools.vo.Car;
+import com.example.orchestration.drools.vo.Policy;
+
+
+   
+rule "High Risk"
+ 	when 	
+ 		$car : Car(style == "SPORTS", color == "RED") 
+ 		$policy : Policy() 
+ 		and $driver : Driver ( age < 21 )					 		
+ 	then
+ 		System.out.println(drools.getRule().getName() +": rule fired");  		
+ 		modify ($policy) { setPremium(increasePremiumRate($policy, 20)) };
+ end
+ 
+ rule "Med Risk"
+ 	when 	
+ 		$car : Car(style == "SPORTS", color == "RED") 
+ 		$policy : Policy() 
+ 		and $driver : Driver ( age > 21 )					 		
+ 	then
+ 		System.out.println(drools.getRule().getName() +": rule fired");  		
+ 		modify ($policy) { setPremium(increasePremiumRate($policy, 10)) };
+ end
+ 
+ 
+ function double increasePremiumRate(Policy pol, double percentage) {
+ 	return (pol.getPremium() + pol.getPremium() * percentage / 100);
+ }
+ 
+ 

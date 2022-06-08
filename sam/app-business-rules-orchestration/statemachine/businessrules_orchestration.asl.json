@@ -1,0 +1,76 @@
+{
+    "Comment": "A state machine that orchestrates business rules execution and there by auditing the same",
+    "StartAt": "Audit Request",
+    "States": {
+      "Audit Request": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${AuditLambaPath}"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Execute Ruleset",
+        "ResultPath": "$.audit",
+        "InputPath": "$"
+      },
+      "Execute Ruleset": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "${ExecuteRulesetLambdaPath}",
+          "Payload.$": "$"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "InputPath": "$",
+        "Next": "Audit Response",
+        "ResultPath": "$.finalresponse"
+      },
+      "Audit Response": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${AuditLambaPath}"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "End": true,
+        "InputPath": "$",
+        "ResultPath": "$.apiresponse",
+        "OutputPath": "$.finalresponse.Payload.body"
+      }
+    }
+  }
