@@ -54,6 +54,7 @@ Resources:
                 - logs:DescribeLogGroups
                 - logs:PutLogEvents
                 - logs:CreateLogGroup
+                - logs:CreateLogStream
                 - cloudwatch:PutMetricData
                 Resource: '*'
               -
