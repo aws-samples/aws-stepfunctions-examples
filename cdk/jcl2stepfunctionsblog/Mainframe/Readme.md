@@ -1,4 +1,4 @@
-##Sample Mainframe Code to accompany JCL to Step Function Blog
+## Sample Mainframe Code to accompany JCL to Step Function Blog
 ==============================================================
 The code elements supplied are 
 
@@ -9,7 +9,7 @@ The code elements supplied are
 4. DCLEMP.DCL   : DCL Gen that describes the above employee table
 5. EMP.CPY      : The COBOL copybook layout equivalent to the table 
 
-##Overview of the AWSSTEPF.JCL 
+## Overview of the AWSSTEPF.JCL 
 ==============================================================
 
    This Sample JCL attempts to demonstrate the complexity of routing flow 
@@ -44,7 +44,7 @@ The code elements supplied are
       the file to be processed to another dataset for processing by
       another department
 
-##In the Real world 
+## In the Real world 
 ==============================================================
 
    In production environments, such JCLs are generally accompanied
@@ -57,7 +57,7 @@ The code elements supplied are
    There are also tools like CA-11 that automate recovery to some
    extent. These require expert configuration.
 
-##Also ... like in the Real world 
+## Also ... like in the Real world 
 ==============================================================
    There is some commented code
    It is not unusual to find such confusing comments in old JCLs 
