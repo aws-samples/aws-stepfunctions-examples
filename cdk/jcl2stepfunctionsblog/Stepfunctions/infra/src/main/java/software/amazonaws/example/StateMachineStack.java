@@ -16,7 +16,10 @@ import software.amazon.awscdk.services.events.targets.SfnStateMachineProps;
 import software.amazon.awscdk.services.iam.IRole;
 import software.amazon.awscdk.services.lambda.*;
 import software.amazon.awscdk.services.lambda.Runtime;
+import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.s3.*;
+import software.amazon.awscdk.services.ssm.StringParameter;
+import software.amazon.awscdk.services.ssm.StringParameterProps;
 import software.amazon.awscdk.services.stepfunctions.*;
 import software.amazon.awscdk.services.stepfunctions.tasks.*;
 import software.constructs.Construct;
@@ -45,11 +48,21 @@ public class StateMachineStack extends Stack {
     public StateMachineStack(final Construct scope, final String id, final StateMachineStackProps props) {
         super(scope, id, props);
 
+        CfnParameter cfnParameter = CfnParameter.Builder.create(this, "environamentName")
+                .type("String")
+                .description("Deployment environment. Example : Production")
+                .defaultValue("Production")
+                .build();
 
         Bucket s3Bucket = new Bucket(this, "S3Bucket", BucketProps.builder()
                 .publicReadAccess(false)
                 .build());
         CfnBucket bucket = (CfnBucket) s3Bucket.getNode().getDefaultChild();
+
+        StringParameter ssmParam = StringParameter.Builder.create(this, "exampleSSMParam")
+                .parameterName("MyEnvironment")
+                .stringValue(cfnParameter.getValueAsString())
+                .build();
 
         bucket.addPropertyOverride("NotificationConfiguration.EventBridgeConfiguration.EventBridgeEnabled", true);
 
@@ -79,40 +92,59 @@ public class StateMachineStack extends Stack {
 
         Succeed succeedState = new Succeed(this, "Success");
 
-        StateMachine stateMachine = StateMachine.Builder.create(this, "MyStateMachine")
-                .definition(
-                        new CallAwsService(this, "S3GetObjectCall", CallAwsServiceProps.builder()
-                                .service("s3")
-                                .action("getObject")
-                                .parameters(Map.of("Bucket.$", "$.detail.bucket.name", "Key.$", "$.detail.object.key"))
-                                .resultSelector(Map.of("body.$", "$.Body"))
-                                .iamResources(Arrays.asList(s3Bucket.getBucketArn(), s3Bucket.getBucketArn() + "/*"))
+        CallAwsService callSSM = new CallAwsService(this, "GetSSMParam", CallAwsServiceProps.builder()
+                .service("ssm")
+                .action("getParameter")
+                .parameters(Map.of("Name", "MyEnvironment"))
+                .resultSelector(Map.of("name.$", "$.Parameter.Value"))
+                .resultPath("$.environment")
+                .iamResources(Arrays.asList(ssmParam.getParameterArn()))
+                .build()
+        );
+
+        CallAwsService callS3 = new CallAwsService(this, "S3GetObjectCall", CallAwsServiceProps.builder()
+                .service("s3")
+                .action("getObject")
+                .parameters(Map.of("Bucket.$", "$.detail.bucket.name", "Key.$", "$.detail.object.key"))
+                .resultSelector(Map.of("body.$", "$.Body"))
+                .iamResources(Arrays.asList(s3Bucket.getBucketArn(), s3Bucket.getBucketArn() + "/*"))
+                .build()
+        );
+
+        EventBridgePutEvents eventBridgePutEvents = new EventBridgePutEvents(this, "PublishEmployeeEvent", EventBridgePutEventsProps.builder()
+                .entries(Arrays.asList(
+                        EventBridgePutEventsEntry.builder()
+                                .eventBus(bus)
+                                .detail(TaskInput.fromJsonPathAt("$"))
+                                .detailType("MissingEmployees")
+                                .source("EmployeeStepFunction")
                                 .build()
                         )
-                                .next(new Choice(this,"Empty File?")
-                                        .when(Condition.stringEquals("$.body", ""), succeedState)
-                                        .otherwise(
-                                                LambdaInvoke.Builder.create(this, "FindEmployeesTask")
-                                                        .lambdaFunction(findEmployeesFunction)
-                                                        .resultSelector(Map.of("Payload.$", "$.Payload"))
-                                                        .build()
-                                                        .next(new Choice(this, "New Employee Records?")
-                                                                .when(Condition.isPresent("$.Payload[0]"), new EventBridgePutEvents(this, "PublishEmployeeEvent", EventBridgePutEventsProps.builder()
-                                                                        .entries(Arrays.asList(
-                                                                                EventBridgePutEventsEntry.builder()
-                                                                                        .eventBus(bus)
-                                                                                        .detail(TaskInput.fromJsonPathAt("$"))
-                                                                                        .detailType("MissingEmployees")
-                                                                                        .source("EmployeeStepFunction")
-                                                                                        .build()
-                                                                                )
-                                                                        )
-                                                                        .build())
-                                                                .next(succeedState))
-                                                                .otherwise(succeedState)
+                )
+                .build());
+
+        StateMachine stateMachine = StateMachine.Builder.create(this, "MyStateMachine")
+                .definition(
+                        callS3.next(new Choice(this, "Empty File?")
+                                .when(Condition.stringEquals("$.body", ""), succeedState)
+                                .otherwise(
+                                        LambdaInvoke.Builder.create(this, "FindEmployeesTask")
+                                                .lambdaFunction(findEmployeesFunction)
+                                                .resultSelector(Map.of("Payload.$", "$.Payload"))
+                                                .build()
+                                                .next(new Choice(this, "New Employee Records?")
+                                                        .when(Condition.isPresent("$.Payload[0]"),
+                                                                callSSM.next(
+                                                                        new Choice(this, "Dev Environment?")
+                                                                                .when(Condition.stringEquals("$.environment.name", "Development"), succeedState)
+                                                                                .otherwise(eventBridgePutEvents.next(succeedState))
+                                                                )
                                                         )
-                                        )
+                                                        .otherwise(succeedState)
+                                                )
                                 )
+                        )
+
                 )
                 .tracingEnabled(true)
                 .build();
