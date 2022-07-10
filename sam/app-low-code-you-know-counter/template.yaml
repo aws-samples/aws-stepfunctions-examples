@@ -45,6 +45,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
   
   # media bucket is configured to allow necessary access to the Transcribe and Step Functions services
   TranscribeMediaBucketPolicy:
@@ -97,6 +99,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
     
   TranscribeResultsBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -138,6 +142,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
 
   AthenaQueryResultsBucketPolicy:
     Type: AWS::S3::BucketPolicy
