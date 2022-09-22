@@ -171,3 +171,81 @@ Resources:
             End: true
             ResultPath: null
  
+  # Utility: List objects from S3 and create batches of 38 that can be processed concurrently in a Map state
+  StateMachineUtilStateMachineUtilRunGlueCrawlersWithTags:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterPrefix, "_S3_BuildBatchesOfKeysForConcurrentProcessing"]]
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            -
+              Effect: Allow
+              Action:
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+              - xray:GetSamplingRules
+              - xray:GetSamplingTargets
+              Resource: '*'
+      Definition:
+        Comment: A description of my state machine
+        StartAt: Set Parameters
+        States:
+          Set Parameters:
+            Type: Pass
+            Next: Get First Batch
+            Parameters:
+              config:
+                listBucket: $.list_bucket
+                listPrefix: $.list_prefix
+                batchBucket: $.batch_bucket
+                batchPrefix.$: States.Format('coe226640/batches/{}/',$$.Execution.Name)
+          Get First Batch:
+            Type: Task
+            Parameters:
+              Bucket.$: $.config.listBucket
+              MaxKeys: 38
+              Prefix.$: $.config.listPrefix
+            Resource: arn:aws:states:::aws-sdk:s3:listObjectsV2
+            ResultPath: $.batch
+            Next: PutObject
+          PutObject:
+            Type: Task
+            Next: Choice
+            Parameters:
+              Body.$: $.batch
+              Bucket.$: $.config.batchBucket
+              Key.$: >-
+                States.Format('{}batch-{}.json',$.config.batchPrefix,States.StringToJson($.batch.Contents[0].ETag))
+            Resource: arn:aws:states:::aws-sdk:s3:putObject
+            ResultPath: null
+          Choice:
+            Type: Choice
+            Choices:
+              - Variable: $.batch.NextContinuationToken
+                IsPresent: true
+                Next: Get Paged Batch
+            Default: Format Output
+          Get Paged Batch:
+            Type: Task
+            Parameters:
+              Bucket.$: $.config.listBucket
+              MaxKeys: 38
+              Prefix.$: $.config.listPrefix
+              ContinuationToken.$: $.batch.NextContinuationToken
+            Resource: arn:aws:states:::aws-sdk:s3:listObjectsV2
+            ResultPath: $.batch
+            Next: PutObject
+          Format Output:
+            Type: Pass
+            Parameters: {
+              batchBucket: $.config.batchBucket,
+              listBucket: $.config.listBucket
+            }
+            End: true
+
+
+  
