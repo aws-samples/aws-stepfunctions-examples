@@ -1,1 +1,0 @@
-cdk deploy --all --require-approval never
