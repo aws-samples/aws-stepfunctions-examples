@@ -1,0 +1,554 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  rule-orchestration-app
+
+  SAM Template for rule-orchestration-app
+
+Parameters:
+  ImageURI:
+    Type: String
+    Default: XXXXXXXXXXXX.dkr.ecr.us-east-1.amazonaws.com/drools_private_repo:latest
+  VPCCidrBlock:
+    Type: String
+    Default: 10.3.0.0/16
+
+Globals:
+  Function:
+    Timeout: 3
+
+Mappings:  
+  StepFunctionsNames:    
+    RuleStateMachine:      
+      "Name": "Rule-Orchestration-State-Machine"
+
+Resources:
+
+  ExecuteBusinessRulesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ExecuteRuleset
+      Handler: app.lambda_handler
+      Layers: 
+        - arn:aws:lambda:us-east-1:668099181075:layer:AWSLambda-Python-AWS-SDK:4
+      Runtime: python3.9
+      Description: A function that executes the ruleset exposed by Drools spring boot container 
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt ExecuteBusinessRulesRole.Arn
+      Environment:
+        Variables:
+          DROOLS_URL: !Sub 
+              - 'http://${Domain}/policy/premium'
+              - Domain: !GetAtt FargateAlb.DNSName
+
+  ExecuteBusinessRulesRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSLambdaExecute'        
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action: "sts:AssumeRole"
+      
+  AuditFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: Audit
+      Handler: app.lambda_handler
+      Layers: 
+        - arn:aws:lambda:us-east-1:668099181075:layer:AWSLambda-Python-AWS-SDK:4
+      Runtime: python3.9
+      Description: A function that writes to a DynamoDB table for incoming payload and outgoing payload for rule engine
+      MemorySize: 128
+      Timeout: 60
+      Role: !GetAtt AuditFunctionRole.Arn
+
+  AuditFunctionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                Resource: !Sub 'arn:${AWS::Partition}:dynamodb:*:*:table/rule_execution_audit'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AWSLambdaExecute'  
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - 'lambda.amazonaws.com'
+            Action: "sts:AssumeRole"
+
+  RuleStateMachine:
+      Type: AWS::Serverless::StateMachine
+      DependsOn: RuleStateMachineLogGroup
+      Properties:
+        DefinitionUri: statemachine/businessrules_orchestration.asl.json      
+        DefinitionSubstitutions:
+          AuditLambaPath: !Ref AuditFunction
+          ExecuteRulesetLambdaPath: !Ref ExecuteBusinessRulesFunction      
+        Role:
+          Fn::GetAtt: [ RuleStateMachineExecutionRole, Arn ]
+        Type: EXPRESS
+        Logging:
+          Destinations:
+            - CloudWatchLogsLogGroup:
+                LogGroupArn: !GetAtt [ RuleStateMachineLogGroup, Arn ]
+          IncludeExecutionData: false
+          Level: 'ALL'
+        Events: 
+          ExecuteRuleSetApiEvent:
+            Type: Api
+            Properties:
+              Method: POST
+              Path: /ExecuteRuleSet
+              RestApiId: 
+                !Ref ExecuteRuleSetApi
+
+  RuleStateMachineExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub states.${AWS::Region}.amazonaws.com
+            Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+  
+  RuleStateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "/", [ "stepfunctions", !FindInMap [ StepFunctionsNames, RuleStateMachine, Name ]]]
+
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: ECSLogGroup
+
+  ExecuteRuleSetApi:
+    Type: AWS::Serverless::Api
+    DependsOn: APIGWRole
+    Properties:
+      StageName: Dev
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          version: "1.0"
+          title: "rules-stack"
+        basePath: "/Dev"
+        schemes:
+        - "https"
+        paths:
+          /ExecuteRuleSet:
+            post:
+              consumes:
+              - "application/json"
+              responses:
+                "200":
+                  description: "200 response"
+                "400":
+                  description: "400 response"
+              x-amazon-apigateway-integration:
+                type: "aws"
+                credentials: !GetAtt APIGWRole.Arn
+                httpMethod: "POST"
+                uri: "arn:aws:apigateway:us-east-1:states:action/StartSyncExecution"
+                responses:
+                  "200":
+                    statusCode: "200"
+                    responseTemplates : 
+                      application/json" : !Sub "#set ($inputRoot = $input.path('$')) { \"response\" : $inputRoot.output }"                    
+                  "400":
+                    statusCode: "400"
+                requestTemplates: 
+                  application/json: !Sub "{\"input\": \"$util.escapeJavaScript($input.json('$'))\"\
+                    , \"stateMachineArn\": \"${RuleStateMachine.Arn}\"\
+                    }"
+                passthroughBehavior: "when_no_match"
+
+  APIGWRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: StateFnExecution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: "states:StartSyncExecution"
+                Resource: !GetAtt RuleStateMachine.Arn
+
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      TableName: rule_execution_audit
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      AttributeDefinitions: 
+        - AttributeName: audit_id
+          AttributeType: S
+        - AttributeName: request_id
+          AttributeType: S        
+      KeySchema:
+        - AttributeName: audit_id
+          KeyType: HASH    
+        - AttributeName: request_id
+          KeyType: RANGE
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock:
+        Ref: VPCCidrBlock
+  
+  Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, 4, 8 ]]
+
+  Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      CidrBlock: !Select [ 1, !Cidr [ !GetAtt VPC.CidrBlock, 4, 8 ]]
+  
+  Subnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      CidrBlock: !Select [ 2, !Cidr [ !GetAtt VPC.CidrBlock, 4, 8 ]]
+     
+  Subnet4:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      CidrBlock: !Select [ 3, !Cidr [ !GetAtt VPC.CidrBlock, 4, 8 ]]
+
+  PublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  
+  PrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  
+  RouteSubnet1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRT
+      SubnetId: !Ref Subnet1
+  
+  RouteSubnet2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRT
+      SubnetId: !Ref Subnet2
+
+  RouteSubnet3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRT
+      SubnetId: !Ref Subnet3
+  
+  RouteSubnet4:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRT
+      SubnetId: !Ref Subnet4
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  
+  VpcIgAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  RouteIG:
+    Type: AWS::EC2::Route
+    DependsOn: 
+      - InternetGateway
+      - VpcIgAttachment
+    Properties:
+      RouteTableId: !Ref PublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      SubnetId: !Ref Subnet1
+
+  RouteNatGateway:
+    Type: AWS::EC2::Route
+    DependsOn: [ NatGateway ]
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NatGateway
+      RouteTableId: !Ref PrivateRT
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy  
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+
+  MyTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: ECSTaskExecutionRole
+    Properties:
+      RequiresCompatibilities:
+        - "FARGATE"
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      Cpu: 512
+      Memory: 1024
+      NetworkMode: "awsvpc"
+      ContainerDefinitions:
+        - Name: "droolscontdefn"
+          Image: 
+            Ref: ImageURI
+          MemoryReservation: 256
+          Memory: 512
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ECSLogGroup
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: awslogs-testecs
+
+  ECSCluster:
+    Type: 'AWS::ECS::Cluster'
+    Properties:
+      ClusterName: MyFargateCluster
+
+  FargateAlb:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    DependsOn: InternetGateway
+    Properties:
+      Name: FargateAlb
+      # Scheme: internal
+      Subnets:
+        - !Ref Subnet1
+        - !Ref Subnet2
+      Type: application
+      SecurityGroups:
+        - !GetAtt FargateAlbSG.GroupId
+
+  MyFargateTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      Name: MyFargateTargetGroupv2
+      VpcId: !Ref VPC
+      HealthCheckProtocol: HTTP
+      Matcher: 
+         HttpCode: 404
+      HealthCheckPort: 8080
+      Protocol: HTTP
+      Port: 8080
+      TargetType: ip
+
+  Listener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref MyFargateTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref FargateAlb
+      Port: 80
+      Protocol: HTTP
+
+  FargateAlbSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: SG for the Fargate ALB
+      GroupName: FargateAlbSG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - CidrIpv6: ::/0
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: TCP
+          Description: 'Inbound rule for IPv6 traffic'
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: TCP
+          Description: 'Inbound rule for IPv4 traffic'
+  FargateAlbSGEgress1:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref FargateAlbSG
+      CidrIp: 0.0.0.0/0
+      FromPort: 0
+      ToPort: 65535
+      IpProtocol: TCP
+      Description: 'Outbound rule to communication with the target group'
+  TargetGroupSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: SG for the Fargate ALB
+      GroupName: TargetGroupSG
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref FargateAlbSG
+          FromPort: 80
+          ToPort: 8080
+          IpProtocol: TCP
+          Description: 'Inbound rule for ECS traffic'
+  TargetGroupSGEgress1:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref TargetGroupSG
+      CidrIp: 0.0.0.0/0
+      FromPort: 443
+      ToPort: 443
+      IpProtocol: TCP
+      Description: 'Outbound rule to communication with ECR'
+  TargetGroupSGEgress2:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref TargetGroupSG
+      CidrIp: 0.0.0.0/0
+      FromPort: 53
+      ToPort: 53
+      IpProtocol: UDP
+      Description: 'Outbound rule to communication with ECR'
+  MyECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - Listener
+    Properties:
+      LaunchType: FARGATE
+      Cluster:
+        Ref: "ECSCluster"
+      DesiredCount: 1
+      TaskDefinition:
+        Ref: "MyTaskDefinition"
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref TargetGroupSG
+          Subnets: 
+            - !Ref Subnet3
+            - !Ref Subnet4
+      LoadBalancers:
+        - TargetGroupArn:
+            Ref: MyFargateTargetGroup
+          ContainerPort: 8080
+          ContainerName: droolscontdefn
+
+Outputs: 
+  ExecuteBusinessRulesFunction:
+    Description: "Execute Business Rules Lambda Function ARN"
+    Value: !GetAtt ExecuteBusinessRulesFunction.Arn
+  ExecuteBusinessRulesFunctionIamRole:
+    Description: "Implicit IAM Role created for Execute Business Rules function"
+    Value: !GetAtt ExecuteBusinessRulesFunction.Arn
+
+  AuditFunction:
+    Description: "Audit Lambda Function ARN"
+    Value: !GetAtt AuditFunction.Arn
+  AuditFunctionIamRole:
+    Description: "Implicit IAM Role created for Audit lambda function"
+    Value: !GetAtt AuditFunction.Arn
+
+  RuleStateMachine:
+    Description: "Business Rules Orchestration Step function ARN"
+    Value: !GetAtt RuleStateMachine.Arn
+  RuleStateMachineExecutionRole:
+    Description: "Implicit IAM Role created for Business Rules Orchestration Step function"
+    Value: !GetAtt RuleStateMachineExecutionRole.Arn
+
+  MyECSService:
+    Description: "ECS Service"
+    Value: !Ref MyECSService
+  ECSTaskExecutionRole:
+    Description: "Implicit IAM Role created for ECS Container drools engine"
+    Value: !GetAtt ECSTaskExecutionRole.Arn
+
+  ExecuteRuleSetApi:
+    Description: "Business Rules Orchestration API endpoint URL"
+    Value: !Sub "https://${ExecuteRuleSetApi}.execute-api.${AWS::Region}.amazonaws.com/dev/ExecuteRuleSet/"
+  APIGWRole:
+    Description: "Implicit IAM Role created for API GW"
+    Value: !GetAtt APIGWRole.Arn

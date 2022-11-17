@@ -45,6 +45,12 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:  
       BucketName : !Join ["",[!Ref "AWS::AccountId","-",!Ref "AWS::Region","-video-transcription-example"]]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
 
   StateMachineProcessVideoFile:
     Type: AWS::Serverless::StateMachine

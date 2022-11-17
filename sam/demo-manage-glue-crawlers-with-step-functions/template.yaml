@@ -1,0 +1,689 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Crawler Management: Demonstration of how to manage Glue Crawlers with Step Functions workflows."
+
+Parameters:
+  ParameterPrefix:
+    Type: String
+    Default: "demo-manage-glue-with-stepfunctions"
+    Description: "Prefix to be used in names of the things created by this stack."
+  
+
+Resources:
+
+
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+                - "glue.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - events:PutTargets
+                - events:PutRule
+                - events:DescribeRule
+                - states:StartExecution
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - logs:PutLogEvents
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - cloudwatch:PutMetricData
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - s3:*
+                Resource: "*"
+              - Effect: Allow
+                Action: athena:*
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - glue:*
+                  - iam:ListRolePolicies
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                Resource: '*'
+
+  StateMachineCreateDataset:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Type: "EXPRESS"
+      Name: !Join ["",[!Ref ParameterPrefix, "_create-dataset"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      DefinitionSubstitutions:
+        bucket-name: !Ref DataBucket 
+      Definition:
+        StartAt: Parallel
+        States:
+          Parallel:
+            Branches:
+              - StartAt: Daily User - Years
+                States:
+                  Daily User - Per Year:
+                    End: true
+                    Iterator:
+                      StartAt: Daily User - Months
+                      States:
+                        Daily User - Months:
+                          Next: Daily User - Per Month
+                          Parameters:
+                            months:
+                              - '01'
+                              - '02'
+                              - '03'
+                              - '04'
+                              - '05'
+                              - '06'
+                              - '07'
+                              - '08'
+                              - '09'
+                              - '10'
+                              - '11'
+                              - '12'
+                            year.$: $.year
+                          Type: Pass
+                        Daily User - Per Month:
+                          End: true
+                          ItemsPath: $.months
+                          Iterator:
+                            StartAt: Daily User - Generate Days
+                            States:
+                              Daily User - Generate Days:
+                                Next: Daily User - Per Day
+                                Parameters:
+                                  days:
+                                    - '01'
+                                    - '02'
+                                    - '03'
+                                    - '04'
+                                    - '05'
+                                    - '06'
+                                    - '07'
+                                    - '08'
+                                    - '09'
+                                    - '10'
+                                    - '11'
+                                    - '12'
+                                    - '13'
+                                    - '14'
+                                    - '15'
+                                    - '16'
+                                    - '17'
+                                    - '18'
+                                    - '19'
+                                    - '20'
+                                    - '21'
+                                    - '22'
+                                    - '23'
+                                    - '24'
+                                    - '25'
+                                    - '26'
+                                    - '27'
+                                  month.$: $.month
+                                  year.$: $.year
+                                Type: Pass
+                              Daily User - Per Day:
+                                End: true
+                                ItemsPath: $.days
+                                Iterator:
+                                  StartAt: Daily User - Generate User Data
+                                  States:
+                                    Daily User - Create File Per User:
+                                      End: true
+                                      ItemsPath: $.users
+                                      Iterator:
+                                        StartAt: Daily User - Create Json File Per User
+                                        States:
+                                          Daily User - Create Json File Per User:
+                                            End: true
+                                            Parameters:
+                                              Body.$: $.user
+                                              Bucket: ${bucket-name}
+                                              Key.$: >-
+                                                States.Format('data/daily-user-summaries/year={}/month={}/date={}-{}-{}/{}-{}-{}_{}.json',$.year,$.month,$.year,$.month,$.day,$.year,$.month,$.day,$.user.user)
+                                            Resource: arn:aws:states:::aws-sdk:s3:putObject
+                                            ResultPath: null
+                                            Retry:
+                                              - BackoffRate: 1.5
+                                                ErrorEquals:
+                                                  - States.ALL
+                                                IntervalSeconds: 1
+                                                MaxAttempts: 3
+                                            Type: Task
+                                      Parameters:
+                                        day.$: $.day
+                                        month.$: $.month
+                                        user.$: $$.Map.Item.Value
+                                        year.$: $.year
+                                      ResultPath: null
+                                      Type: Map
+                                    Daily User - Generate User Data:
+                                      Next: Daily User - Create File Per User
+                                      Result:
+                                        - usage: 672
+                                          user: user-00000000001
+                                        - usage: 25
+                                          user: user-00000000002
+                                        - usage: 32
+                                          user: user-00000000003
+                                        - usage: 1
+                                          user: user-00000000004
+                                        - usage: 0
+                                          user: user-00000000005
+                                        - usage: 500
+                                          user: user-00000000006
+                                        - usage: 7000
+                                          user: user-00000000007
+                                        - usage: 13
+                                          user: user-00000000008
+                                        - usage: 12
+                                          user: user-00000000009
+                                        - usage: 120
+                                          user: user-00000000010
+                                        - usage: 5
+                                          user: user-00000000011
+                                      ResultPath: $.users
+                                      Type: Pass
+                                Parameters:
+                                  day.$: $$.Map.Item.Value
+                                  month.$: $.month
+                                  year.$: $.year
+                                ResultPath: null
+                                Type: Map
+                          MaxConcurrency: 1
+                          Parameters:
+                            month.$: $$.Map.Item.Value
+                            year.$: $.year
+                          ResultPath: null
+                          Type: Map
+                    MaxConcurrency: 1
+                    Parameters:
+                      year.$: $$.Map.Item.Value
+                    ResultPath: null
+                    Type: Map
+                  Daily User - Years:
+                    Next: Daily User - Per Year
+                    Result:
+                      - '2016'
+                      - '2017'
+                      - '2018'
+                      - '2019'
+                      - '2020'
+                      - '2021'
+                    Type: Pass
+              - StartAt: Locations - Years
+                States:
+                  Locations - Per Year:
+                    End: true
+                    Iterator:
+                      StartAt: Locations - Months
+                      States:
+                        Locations - Months:
+                          Next: Locations - Per Month
+                          Parameters:
+                            months:
+                              - '01'
+                              - '02'
+                              - '03'
+                              - '04'
+                              - '05'
+                              - '06'
+                              - '07'
+                              - '08'
+                              - '09'
+                              - '10'
+                              - '11'
+                              - '12'
+                            year.$: $.year
+                          Type: Pass
+                        Locations - Per Month:
+                          End: true
+                          ItemsPath: $.months
+                          Iterator:
+                            StartAt: Locations - Generate Days
+                            States:
+                              Locations - Generate Days:
+                                Next: Locations - Per Day
+                                Parameters:
+                                  days:
+                                    - '01'
+                                    - '02'
+                                    - '03'
+                                    - '04'
+                                    - '05'
+                                    - '06'
+                                    - '07'
+                                    - '08'
+                                    - '09'
+                                    - '10'
+                                    - '11'
+                                    - '12'
+                                    - '13'
+                                    - '14'
+                                    - '15'
+                                    - '16'
+                                    - '17'
+                                    - '18'
+                                    - '19'
+                                    - '20'
+                                    - '21'
+                                    - '22'
+                                    - '23'
+                                    - '24'
+                                    - '25'
+                                    - '26'
+                                    - '27'
+                                  month.$: $.month
+                                  year.$: $.year
+                                Type: Pass
+                              Locations - Per Day:
+                                End: true
+                                ItemsPath: $.days
+                                Iterator:
+                                  StartAt: Locations - Generate Location Data
+                                  States:
+                                    Locations - Create File Per User:
+                                      ItemsPath: $.locations
+                                      Iterator:
+                                        StartAt: Locations - Create Json File Per Location
+                                        States:
+                                          Locations - Create Json File Per Location:
+                                            End: true
+                                            Parameters:
+                                              Body.$: $.location
+                                              Bucket: ${bucket-name}
+                                              Key.$: >-
+                                                States.Format('data/daily-location-summaries/year={}/month={}/date={}-{}-{}/{}-{}-{}_{}.json',$.year,$.month,$.year,$.month,$.day,$.year,$.month,$.day,$.location.name)
+                                            Resource: arn:aws:states:::aws-sdk:s3:putObject
+                                            ResultPath: null
+                                            Retry:
+                                              - BackoffRate: 1.5
+                                                ErrorEquals:
+                                                  - States.ALL
+                                                IntervalSeconds: 1
+                                                MaxAttempts: 3
+                                            Type: Task
+                                      Parameters:
+                                        day.$: $.day
+                                        location.$: $$.Map.Item.Value
+                                        month.$: $.month
+                                        year.$: $.year
+                                      ResultPath: null
+                                      Type: Map
+                                      End: true
+                                    Locations - Generate Location Data:
+                                      Next: Locations - Create File Per User
+                                      Result:
+                                        - name: location-00000000001
+                                          state: ny
+                                          total_usage: 24523
+                                          users: 75
+                                        - name: location-00000000002
+                                          state: nd
+                                          total_usage: 325
+                                          users: 6
+                                        - name: location-00000000003
+                                          state: ca
+                                          total_usage: 34897
+                                          users: 125
+                                        - name: location-00000000004
+                                          state: ny
+                                          total_usage: 5432
+                                          users: 35
+                                        - name: location-00000000005
+                                          state: ca
+                                          total_usage: 6421
+                                          users: 89
+                                        - name: location-00000000006
+                                          state: ct
+                                          total_usage: 625
+                                          users: 18
+                                      ResultPath: $.locations
+                                      Type: Pass
+                                Parameters:
+                                  day.$: $$.Map.Item.Value
+                                  month.$: $.month
+                                  year.$: $.year
+                                ResultPath: null
+                                Type: Map
+                          MaxConcurrency: 1
+                          Parameters:
+                            month.$: $$.Map.Item.Value
+                            year.$: $.year
+                          ResultPath: null
+                          Type: Map
+                    MaxConcurrency: 1
+                    Parameters:
+                      year.$: $$.Map.Item.Value
+                    ResultPath: null
+                    Type: Map
+                  Locations - Years:
+                    Next: Locations - Per Year
+                    Result:
+                      - '2016'
+                      - '2017'
+                      - '2018'
+                      - '2019'
+                      - '2020'
+                      - '2021'
+                    Type: Pass
+              - StartAt: Locations All Time - Generate Location Data
+                States:
+                  Locations All Time - Generate Location Data:
+                    Result:
+                      - name: location-00000000001
+                        state: ny
+                        total_usage: 32524523
+                        users: 2375
+                      - name: location-00000000002
+                        state: nd
+                        total_usage: 456325
+                        users: 226
+                      - name: location-00000000003
+                        state: ca
+                        total_usage: 24348967
+                        users: 67125
+                      - name: location-00000000004
+                        state: ny
+                        total_usage: 3154327
+                        users: 2335
+                      - name: location-00000000005
+                        state: ca
+                        total_usage: 5649021
+                        users: 8932
+                      - name: location-00000000006
+                        state: ct
+                        total_usage: 262543
+                        users: 1284
+                    ResultPath: $.locations
+                    Type: Pass
+                    Next: Locations All Time - Create File Per Location
+                  Locations All Time - Create File Per Location:
+                    End: true
+                    ItemsPath: $.locations
+                    Iterator:
+                      StartAt: Locations All Time - Create Json File Per Location
+                      States:
+                        Locations All Time - Create Json File Per Location:
+                          End: true
+                          Parameters:
+                            Body.$: $.location
+                            Bucket: ${bucket-name}
+                            Key.$: >-
+                              States.Format('data/all-time-location-summaries/{}.json',$.location.name)
+                          Resource: arn:aws:states:::aws-sdk:s3:putObject
+                          ResultPath: null
+                          Retry:
+                            - BackoffRate: 1.5
+                              ErrorEquals:
+                                - States.ALL
+                              IntervalSeconds: 1
+                              MaxAttempts: 3
+                          Type: Task
+                    Parameters:
+                      location.$: $$.Map.Item.Value
+                    ResultPath: null
+                    Type: Map
+            End: true
+            Type: Parallel
+
+
+
+
+
+
+  StateMachineUtilRunGlueCrawler:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterPrefix, "_run-crawler"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Definition:
+        Comment: A utility state machine to run a glue crawler and monitor it until completion
+        StartAt: StartCrawler
+        States:
+          StartCrawler:
+            Type: Task
+            Parameters:
+              Name.$: $.crawler_name
+            Resource: arn:aws:states:::aws-sdk:glue:startCrawler
+            Retry:
+              - ErrorEquals:
+                  - Glue.EntityNotFoundException
+                BackoffRate: 1
+                IntervalSeconds: 1
+                MaxAttempts: 0
+                Comment: EntityNotFoundException - Fail immediately
+              - ErrorEquals:
+                  - Glue.CrawlerRunningException
+                BackoffRate: 1
+                IntervalSeconds: 1
+                MaxAttempts: 0
+            Next: GetCrawler
+            ResultPath: $.response.start_crawler
+            Catch:
+              - ErrorEquals:
+                  - Glue.CrawlerRunningException
+                Next: GetCrawler
+                Comment: Crawler Already Running, just continue to monitor
+                ResultPath: $.response.start_crawler
+          GetCrawler:
+            Type: Task
+            Parameters:
+              Name.$: $.crawler_name
+            Resource: arn:aws:states:::aws-sdk:glue:getCrawler
+            ResultPath: $.response.get_crawler
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                BackoffRate: 2
+                IntervalSeconds: 1
+                MaxAttempts: 8
+            Next: Is Running?
+          Is Running?:
+            Type: Choice
+            Choices:
+              - Or:
+                  - Variable: $.response.get_crawler.Crawler.State
+                    StringEquals: RUNNING
+                  - Variable: $.response.get_crawler.Crawler.State
+                    StringEquals: STOPPING
+                Next: Wait for Crawler To Complete
+            Default: Prepare Output
+          Wait for Crawler To Complete:
+            Type: Wait
+            Seconds: 5
+            Next: GetCrawler
+          Prepare Output:
+            Type: Pass
+            End: true
+            Parameters:
+              crawler_name.$: $.crawler_name
+              LastCrawl.$: $.response.get_crawler.Crawler.LastCrawl
+
+  # Utility: Run all Glue Crawlers based on tags
+  StateMachineUtilRunGlueCrawlersWithTags:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Tracing:
+        Enabled: true
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterPrefix, "_run-crawlers-with-tags"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Definition:
+        Comment: A utility state machine to run all Glue Crawlers that match tags
+        StartAt: Get Glue Crawler List
+        States:
+          Get Glue Crawler List:
+            Type: Task
+            Parameters:
+              Tags.$: $.tags 
+            Resource: arn:aws:states:::aws-sdk:glue:listCrawlers
+            Retry:
+              - ErrorEquals:
+                  - States.ALL
+                IntervalSeconds: 2
+                MaxAttempts: 3
+                BackoffRate: 5
+            OutputPath: $.CrawlerNames
+            Next: Run Glue Crawlers
+          Run Glue Crawlers:
+            Type: Map
+            Iterator:
+              StartAt: Run Glue Crawler
+              States:
+                Run Glue Crawler:
+                  Type: Task
+                  Resource: arn:aws:states:::states:startExecution.sync:2
+                  Parameters:
+                    StateMachineArn: !Ref StateMachineUtilRunGlueCrawler
+                    Input:
+                      crawler_name.$: $
+                  Retry:
+                    - ErrorEquals:
+                        - States.ALL
+                      IntervalSeconds: 2
+                      MaxAttempts: 3
+                      BackoffRate: 5
+                  Catch:
+                    - ErrorEquals:
+                        - States.ALL
+                      Next: Success
+                  Next: Success
+                Success:
+                  Type: Succeed
+            End: true
+            ResultPath: null
+ 
+  LogGroupStateMachines:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ["",["/aws/states/serivcedata-",!Ref ParameterPrefix, "-StateMachineLogs"]]
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  AthenaResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256 
+      VersioningConfiguration:
+        Status: Enabled
+  
+  GlueCrawlerDailyUsers:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterPrefix, "-database"]]
+      Name: !Join ["",[!Ref ParameterPrefix, "-daily-user-summaries"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Tags:
+        "datasource": "daily-user-summaries"
+        "is-partitioned": "yes"
+        "datatype": "json"
+        "bucket": !Ref DataBucket
+        "folder": "/data/daily-user-summaries/"
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/data/daily-user-summaries/"]]
+
+  GlueCrawlerDailyLocations:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterPrefix, "-database"]]
+      Name: !Join ["",[!Ref ParameterPrefix, "-daily-location-summaries"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Tags:
+        "datasource": "daily-location-summaries"
+        "is-partitioned": "yes"
+        "datatype": "json"
+        "bucket": !Ref DataBucket
+        "folder": "/data/daily-location-summaries/"
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/data/daily-location-summaries/"]]
+
+  GlueCrawlerAllTimeLocations:
+    Type: AWS::Glue::Crawler
+    Properties: 
+      DatabaseName: !Join ["",[!Ref ParameterPrefix, "-database"]]
+      Name: !Join ["",[!Ref ParameterPrefix, "-all-time-location-summaries"]]
+      Role: !GetAtt ApplicationRole.Arn
+      Tags:
+        "datasource": "all-time-location-summaries"
+        "is-partitioned": "no"
+        "datatype": "json"
+        "bucket": !Ref DataBucket
+        "folder": "/data/all-time-location-summaries/"
+      Targets: 
+        S3Targets:
+          - Path: !Join ["",["s3://",!Ref DataBucket ,"/data/all-time-location-summaries/"]]
+
+
+  

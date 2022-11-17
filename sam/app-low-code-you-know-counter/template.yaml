@@ -45,6 +45,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
   
   # media bucket is configured to allow necessary access to the Transcribe and Step Functions services
   TranscribeMediaBucketPolicy:
@@ -97,6 +99,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
     
   TranscribeResultsBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -138,6 +142,8 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
 
   AthenaQueryResultsBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -211,7 +217,7 @@ Resources:
             Next: GetTranscriptionJob
           GetTranscriptionJob:
             Type: Task
-            Comment: Retrieve the status of a Transcribe job
+            Comment: Retrieve the status of an Amazon Transcribe job
             Parameters:
               TranscriptionJobName.$: "$.TranscriptionJob.TranscriptionJobName"
             Resource: !Sub 'arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:aws-sdk:transcribe:getTranscriptionJob'
@@ -357,7 +363,7 @@ Resources:
   ResultsQueryPreparedStatement:
     Type: AWS::Athena::PreparedStatement
     Properties:
-      Description: Create a statement that allows the use of a parameter for specifying a Transcribe job name in the Athena query
+      Description: Create a statement that allows the use of a parameter for specifying an Amazon Transcribe job name in the Athena query
       QueryStatement: !Sub >-
         select cardinality(regexp_extract_all(results.transcripts[1].transcript, '${FillerPhrase}')) AS item_count from "${GlueDatabaseYouKnow}"."${AthenaTableName}" where jobname like ?
       StatementName: !Ref AthenaQueryPreparedStatementName
