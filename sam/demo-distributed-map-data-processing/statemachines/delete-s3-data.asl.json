@@ -1,0 +1,61 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "ListObjectsV2",
+  "States": {
+    "ListObjectsV2": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket.$": "$.BucketToEmpty"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+      "Next": "Delete Objects"
+    },
+    "Delete Objects": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "Payload.$": "$",
+        "FunctionName": "${TransformFunction}"
+      },
+
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 6,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Has next page?"
+    },
+    "Has next page?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.NextContinuationToken",
+          "IsPresent": true,
+          "Next": "ListObjectsV2 with pagination"
+        }
+      ],
+      "Default": "Success"
+    },
+    "ListObjectsV2 with pagination": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket.$": "$.BucketToEmpty",
+        "ContinuationToken.$": "$.NextContinuationToken"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+      "Next": "Delete Objects"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}

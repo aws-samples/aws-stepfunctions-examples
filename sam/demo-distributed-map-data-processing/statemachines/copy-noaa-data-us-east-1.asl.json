@@ -1,0 +1,89 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "ListObjectsV2",
+  "States": {
+    "ListObjectsV2": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket": "noaa-gsod-pds"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+      "Next": "Distributed S3 copy"
+    },
+    "Distributed S3 copy": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "DISTRIBUTED",
+          "ExecutionType": "EXPRESS"
+        },
+        "StartAt": "Map",
+        "States": {
+          "Map": {
+            "Type": "Map",
+            "ItemProcessor": {
+              "ProcessorConfig": {
+                "Mode": "INLINE"
+              },
+              "StartAt": "CopyObject",
+              "States": {
+                "CopyObject": {
+                  "Type": "Task",
+                  "Parameters": {
+                    "Bucket": "${DestinationBucket}",
+                    "Key.$": "$.Key",
+                    "CopySource.$": "States.Format('noaa-gsod-pds/{}', $.Key)"
+                  },
+                  "Resource": "arn:aws:states:::aws-sdk:s3:copyObject",
+                  "End": true,
+                  "Retry": [
+                    {
+                      "ErrorEquals": ["S3.SdkClientException", "S3.S3Exception"],
+                      "BackoffRate": 2,
+                      "IntervalSeconds": 1,
+                      "MaxAttempts": 3,
+                      "Comment": "Retry on failed connections"
+                    }
+                  ]
+                }
+              }
+            },
+            "End": true,
+            "ItemsPath": "$.Items"
+          }
+        }
+      },
+      "Label": "DistributedS3copy",
+      "ItemsPath": "$.Contents",
+      "ResultPath": null,
+      "Next": "Has next page?",
+      "ItemBatcher": {
+        "MaxItemsPerBatch": 100
+      },
+      "MaxConcurrency": 1000
+    },
+    "Has next page?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.NextContinuationToken",
+          "IsPresent": true,
+          "Next": "ListObjectsV2 with pagination"
+        }
+      ],
+      "Default": "Success"
+    },
+    "ListObjectsV2 with pagination": {
+      "Type": "Task",
+      "Parameters": {
+        "Bucket": "noaa-gsod-pds",
+        "ContinuationToken.$": "$.NextContinuationToken"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+      "Next": "Distributed S3 copy"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}

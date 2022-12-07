@@ -1,0 +1,247 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Sample SAM Template for step-functions-distributed-map-test
+
+Globals:
+  Function:
+    CodeUri: functions/temps/
+    Runtime: python3.9
+    Timeout: 120
+    Architectures:
+      - arm64
+
+Resources:
+  # Resourcs for the state machine that copies data from the public noaa bucket
+
+  NOAADataBucket:
+    Type: AWS::S3::Bucket
+
+  CopyS3DataApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: !Ref "AWS::AccountId"
+              Service:
+                - states.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: CopyS3DataPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - S3:ListBucket
+                  - S3:GetObject
+                Resource:
+                  - arn:aws:s3:::noaa-gsod-pds
+                  - arn:aws:s3:::noaa-gsod-pds/*
+              - Effect: Allow
+                Action:
+                  - S3:PutObject
+                Resource: !Join ["/", [!GetAtt NOAADataBucket.Arn, "*"]]
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess
+
+  CopyNOAAS3DataStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: CopyNOAAS3DataStateMachine
+      DefinitionUri: statemachines/copy-noaa-data-us-east-1.asl.json
+      DefinitionSubstitutions:
+        DestinationBucket: !Ref NOAADataBucket
+      Role: !GetAtt CopyS3DataApplicationRole.Arn
+
+  # Resources for the NOAA data state machine
+
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+
+  ResultsDynamoDBTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: pk
+        Type: String
+
+  TemperatureStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: !Ref "AWS::AccountId"
+              Service:
+                - states.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AWSXrayFullAccess
+      Policies:
+        - PolicyName: ReadDataPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - S3:GetObject
+                  - S3:ListBucket
+                Resource:
+                  - !GetAtt NOAADataBucket.Arn
+                  - !Join ["/", [!GetAtt NOAADataBucket.Arn, "*"]]
+        - PolicyName: WriteResultsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - S3:PutObject
+                Resource: !Join ["/", [!GetAtt ResultsBucket.Arn, "*"]]
+        - PolicyName: StartExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:NOAAWeatherStateMachine"
+        - PolicyName: InvokeMapperReducerPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt TemperaturesFunction.Arn
+                  - !GetAtt ReducerFunction.Arn
+
+  TemperaturesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      MemorySize: 2048
+      Environment:
+        Variables:
+          INPUT_BUCKET_NAME: !Ref NOAADataBucket
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref NOAADataBucket
+
+  ReducerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.reducer_handler
+      MemorySize: 2048
+      Environment:
+        Variables:
+          RESULTS_BUCKET_NAME: !Ref ResultsBucket
+          RESULTS_DYNAMODB_TABLE_NAME: !Ref ResultsDynamoDBTable
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ResultsBucket
+        - DynamoDBWritePolicy:
+            TableName: !Ref ResultsDynamoDBTable
+
+  NOAAWeatherLogGroup:
+    Type: AWS::Logs::LogGroup
+
+  NOAAWeatherStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: NOAAWeatherStateMachine
+      DefinitionUri: statemachines/dmap-temperatures.asl.json
+      DefinitionSubstitutions:
+        DistributedMapTestFunctionName: !GetAtt TemperaturesFunction.Arn
+        ReducerFunctionName: !GetAtt ReducerFunction.Arn
+        InputBucket: !Ref NOAADataBucket
+        ResultsBucket: !Ref ResultsBucket
+      Role: !GetAtt TemperatureStateMachineRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt NOAAWeatherLogGroup.Arn
+        IncludeExecutionData: TRUE
+        Level: "ERROR"
+
+  # Delete S3 objects resource
+  DeleteS3DataApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: !Ref "AWS::AccountId"
+              Service:
+                - states.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: ListS3BucketPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - S3:ListBucket
+                Resource:
+                  - !GetAtt NOAADataBucket.Arn
+                  - !GetAtt ResultsBucket.Arn
+        - PolicyName: InvokeFunctionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt DeleteS3ObjectTransformFunction.Arn
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AWSStepFunctionsFullAccess
+
+  DeleteS3ObjectTransformFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: cleanup.handler
+      MemorySize: 512
+      Timeout: 10
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref ResultsBucket
+        - S3CrudPolicy:
+            BucketName: !Ref NOAADataBucket
+
+  DeleteNOAADataStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: DeleteNOAADataStateMachine
+      DefinitionUri: statemachines/delete-s3-data.asl.json
+      DefinitionSubstitutions:
+        TransformFunction: !GetAtt DeleteS3ObjectTransformFunction.Arn
+      Role: !GetAtt DeleteS3DataApplicationRole.Arn
+
+Outputs:
+  StateMachineLogGroupName:
+    Description: CloudWatch log group name for the distirbuted map state machine
+    Value: !Ref NOAAWeatherLogGroup
+  DynamoDBTableName:
+    Description: DynamoDB table name where final results are written
+    Value: !Ref ResultsDynamoDBTable
+  NOAADataBucket:
+    Description: Bucket where the NOAA data will be copied, and where the analysis will read
+    Value: !Ref NOAADataBucket
+  StateMachineResultsBucket:
+    Description: Bucket where the distributed map run will write results
+    Value: !Ref ResultsBucket
