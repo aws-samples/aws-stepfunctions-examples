@@ -9,7 +9,7 @@ on the planet each month_. This data set is interesting for a few reasons:
    averages per _day_. This example Step Function workflow will find the highest avearge temperature
    across all stations by _month_. That is, it answers the question: "What place on earth recorded
    the hightest average daily temperature within a given month?"
-2. There are over 558,000 CSV files in the data set at over 37 GB. The average CSV file side is 66.5
+2. There are over 558,000 CSV files in the data set at over 37 GB. The average CSV file size is 66.5
    KB.
 3. The CSV files are relatively simple to understand and parse.
 
@@ -36,7 +36,7 @@ Each CSV file has the following format (many columns not shown):
 ![](noaa-gsod-pds-data.png)
 
 The mapper Lambda function will read each line into a dictionary and use the `DATE` and `TEMP`
-fields to find the the `STATION` with the highest average daily temperature in a month.
+fields to find the `STATION` with the highest average daily temperature in a month.
 
 ## Output
 
@@ -63,7 +63,7 @@ To run this demo in your own account:
    **NOTE: THIS TAKES ~45-60 min to complete**. If you would like to copy a subset of the files, simply
    stop the execution in the AWS console.
 3. Run the `NOAAWeatherStateMachine` workflow which will read the data you just copied and process
-   it as described above, and write theh results to DynamoDB.
+   it as described above, and write the results to DynamoDB.
 4. Look at the DynamodDB table contents in the AWS console to see the final results. Also look at
    the processing time for the `NOAAWeatherStateMachine` run, which should be on the order of 90-150
    seconds, depending on how much data you copied.
