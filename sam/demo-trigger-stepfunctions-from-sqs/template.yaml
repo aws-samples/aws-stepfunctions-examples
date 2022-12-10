@@ -1,0 +1,92 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Resources:
+
+  PipeSQSToStepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: 2012-10-17
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - pipes.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Sub ${AWS::AccountId}
+                aws:SourceArn: !Sub arn:${AWS::Partition}:pipes:${AWS::Region}:${AWS::AccountId}:pipe/SQStoStepFunctionsStandard
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - states:StartExecution
+                Resource: !Ref StateMachineStandard
+              -
+                Effect: Allow
+                Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+                Resource: !GetAtt QueueForStandard.Arn
+
+  QueueForStandard:
+    Type: AWS::SQS::Queue
+
+  StateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/vendedlogs/states/${AWS::StackName}-Logs
+
+  StateMachineStandard:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Policies:
+        - AWSXrayWriteOnlyAccess
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+              Resource: '*'
+      Tracing:
+        Enabled: true
+      Logging:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StateMachineLogGroup.Arn
+      Definition:
+        StartAt: Start
+        States:
+          Start:
+            Type: Pass
+            End: true
+      Type: STANDARD
+
+  PipeSQStoStepFunctionsStandard:
+    Type: AWS::Pipes::Pipe
+    Properties: 
+      RoleArn: !GetAtt PipeSQSToStepFunctionsRole.Arn
+      Source: !GetAtt QueueForStandard.Arn
+      Target: !Ref StateMachineStandard
+      TargetParameters:
+        StepFunctionStateMachineParameters:
+          InvocationType: FIRE_AND_FORGET
+      Name: SQStoStepFunctionsStandard
