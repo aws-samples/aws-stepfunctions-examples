@@ -15,6 +15,14 @@ Resources:
 
   NOAADataBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
 
   CopyS3DataApplicationRole:
     Type: AWS::IAM::Role
@@ -62,6 +70,14 @@ Resources:
 
   ResultsBucket:
     Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
 
   ResultsDynamoDBTable:
     Type: AWS::Serverless::SimpleTable
