@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "FIS-Experiments"
+
+Parameters:
+  Name:
+    Type: String
+    Default: "FISTest"
+    Description: "Name for reference in the stack"
+
+  VpcID:
+    Type: String
+    Default: "none"
+    Description: "Name of the VPC where the step function and FIS will run"
+
+Resources:
+  # Define FIS Role. Step Function Role will do an IAM Pass to this role during the state executions.
+
+  FISRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "fis.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: FISPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                - ec2:RebootInstances
+                - ec2:StopInstances
+                - ec2:StartInstances
+                - ec2:TerminateInstances
+                - ec2:SendSpotInstanceInterruptions
+                Resource: 'arn:aws:ec2:*:*:instance/*'
+
+        - PolicyName: FISECSPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                - ecs:StopTask
+                Resource: 'arn:aws:ecs:*:*:task/*'
+
+        - PolicyName: SSMPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2messages:*
+                  - ssm:*
+                  - logs:*
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:DeleteServiceLinkedRole
+                  - iam:GetServiceLinkedRoleDeletionStatus
+                Resource: 'arn:aws:iam::*:role/aws-service-role/ssm.amazonaws.com/AWSServiceRoleForAmazonSSM*'
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                Resource: 'arn:aws:iam::*:role/aws-service-role/ssm.amazonaws.com/AWSServiceRoleForAmazonSSM'
+                Condition:
+                  StringLike:
+                    iam:AWSServiceName: ssm.amazonaws.com
+
+# Define StepFunction Role.
+  StepFuctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "states.amazonaws.com"
+                - "fis.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - logs:PutLogEvents
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - cloudwatch:PutMetricData
+                - cloudwatch:DescribeAlarms
+                - cloudwatch:DescribeAlarmHistory
+                - tag:GetResources
+                - ec2:DescribeInstances
+                - ecs:StopTask
+                - iam:GetUser
+                - iam:GetRole
+                - iam:ListUsers
+                - iam:ListRoles
+                - iam:CreateServiceLinkedRole
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - fis:*
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - events:PutRule
+                - events:DeleteRule
+                - events:PutTargets
+                - events:RemoveTargets
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    events:ManagedBy: fis.amazonaws.com
+              -
+                Effect: Allow
+                Action:
+                - iam:GetRole
+                - iam:PassRole
+                Resource: !GetAtt FISRole.Arn
+
+# Create the State Machine for EC2.
+  StateMachineFIS:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: stepfunction/fis.ec2.asl.json
+      DefinitionSubstitutions:
+        FISRole: !GetAtt FISRole.Arn
+        VpcID: !Ref VpcID
+      Role: !GetAtt StepFuctionRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachineFIS.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: !Join [ "",[ !Ref Name,'-', !Ref "AWS::Region", '-', "StateMachineFIS" ] ]
+
+  LogGroupStateMachineFIS:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "", [ "/aws/states/",!Ref Name, '-', !Ref "AWS::Region", "-StateMachineFISLogs" ] ]
+
+# Create the State Machine for ECS.
+  StateMachineECSFIS:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: stepfunction/fis.ecs.asl.json
+      DefinitionSubstitutions:
+        FISRole: !GetAtt FISRole.Arn
+      Role: !GetAtt StepFuctionRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachineFIS.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: !Join [ "",[ !Ref Name,'-', !Ref "AWS::Region", '-', "StateMachineECSFIS" ] ]
+
+  LogGroupStateMachineECSFIS:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "", [ "/aws/states/",!Ref Name, '-', !Ref "AWS::Region", "-StateMachineECSFISLogs" ] ]     
