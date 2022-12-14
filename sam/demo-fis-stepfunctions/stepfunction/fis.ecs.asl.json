@@ -1,0 +1,85 @@
+{
+    "Comment": "State Machine for stopping ECS tasks based on tags",
+    "StartAt": "ECSStopTaskExperimentTemplate",
+    "States": {
+      "ECSStopTaskExperimentTemplate": {
+        "Type": "Task",
+        "Parameters": {
+          "Actions": {
+            "Key": {
+              "ActionId": "aws:ecs:stop-task",
+              "Description": "Run ECS StopTask",
+              "Targets": {
+                "Tasks": "ecsfargatetask"
+              }
+            }
+          },
+          "ClientToken": "clienttoken1",
+          "Targets": {
+            "ecsfargatetask": {
+              "ResourceType": "aws:ecs:task",
+              "ResourceTags": {
+                "FISAction": "StopECSTask"
+              },
+              "SelectionMode": "ALL"
+            }
+          },
+          "Description": "Runs the Amazon ECS API action StopTask to stop the target task.",
+          "RoleArn": "${FISRole}",
+          "StopConditions": [
+            {
+              "Source": "none"
+            }
+          ]
+        },
+        "Resource": "arn:aws:states:::aws-sdk:fis:createExperimentTemplate",
+        "Next": "ECSStopTask"
+      },
+      "ECSStopTask": {
+        "Type": "Task",
+        "Parameters": {
+          "ClientToken": "clienttoken2",
+          "ExperimentTemplateId.$": "$.ExperimentTemplate.Id"
+        },
+        "Resource": "arn:aws:states:::aws-sdk:fis:startExperiment",
+        "Next": "GetExperiment"
+      },
+      "GetExperiment": {
+        "Type": "Task",
+        "Parameters": {
+          "Id.$": "$.Experiment.Id"
+        },
+        "Resource": "arn:aws:states:::aws-sdk:fis:getExperiment",
+        "Next": "Choice"
+      },
+      "Choice": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Not": {
+              "Variable": "$.Experiment.State.Status",
+              "StringEquals": "completed"
+            },
+            "Next": "Wait"
+          },
+          {
+            "Variable": "$.Experiment.State.Status",
+            "StringEquals": "failed",
+            "Next": "Fail"
+          }
+        ],
+        "Default": "Success"
+      },
+      "Wait": {
+        "Type": "Wait",
+        "Seconds": 5,
+        "Next": "GetExperiment"
+      },
+      "Fail": {
+        "Type": "Fail"
+      },
+      "Success": {
+        "Type": "Succeed"
+      }
+    }
+  }

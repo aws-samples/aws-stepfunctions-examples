@@ -1,0 +1,250 @@
+{
+  "Comment": "FIS state machine",
+  "StartAt": "EC2CPUStressExperimentTemplate",
+  "States": {
+    "EC2CPUStressExperimentTemplate": {
+      "Type": "Task",
+      "Next": "CPUStressInstances",
+      "Parameters": {
+        "Actions": {
+          "cpustress": {
+            "ActionId": "aws:ssm:send-command",
+            "Description": "Run Cpu Stress",
+            "Targets": {
+              "Instances": "CPUStressInstances"
+            },
+            "Parameters": {
+              "duration": "PT2M",
+              "documentArn": "arn:aws:ssm:us-east-1::document/AWSFIS-Run-CPU-Stress",
+              "documentParameters": "{\"DurationSeconds\": \"120\", \"InstallDependencies\": \"True\", \"CPU\": \"0\"}"
+            }
+          }
+        },
+        "ClientToken": "clienttoken1",
+        "Targets": {
+          "CPUStressInstances": {
+            "ResourceType": "aws:ec2:instance",
+            "ResourceTags": {
+              "FISAction": "CPUStress"
+            },
+            "Filters": [
+              {
+                "Path": "VpcId",
+                "Values": [
+                  "${VpcID}"
+                ]
+              }
+            ],
+            "SelectionMode": "COUNT(1)"
+          }
+        },
+        "Description": "Induce CPU Stress to the Instance",
+        "RoleArn": "${FISRole}",
+        "StopConditions": [
+          {
+            "Source": "none"
+          }
+        ]
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:createExperimentTemplate"
+    },
+    "CPUStressInstances": {
+      "Type": "Task",
+      "Next": "GetExperiment",
+      "Parameters": {
+        "ClientToken": "clienttoken2",
+        "ExperimentTemplateId.$": "$.ExperimentTemplate.Id"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:startExperiment"
+    },
+    "GetExperiment": {
+      "Type": "Task",
+      "Next": "Choice",
+      "Parameters": {
+        "Id.$": "$.Experiment.Id"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:getExperiment"
+    },
+    "Choice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Experiment.State.Status",
+          "StringEquals": "failed",
+          "Next": "Fail"
+        },
+        {
+          "Not": {
+            "Variable": "$.Experiment.State.Status",
+            "StringEquals": "completed"
+          },
+          "Next": "Wait"
+        }
+      ],
+      "Default": "EC2StopExperimentTemplate"
+    },
+    "Wait": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "GetExperiment"
+    },
+    "Fail": {
+      "Type": "Fail"
+    },
+    "EC2StopExperimentTemplate": {
+      "Type": "Task",
+      "Parameters": {
+        "Actions": {
+          "stop": {
+            "ActionId": "aws:ec2:stop-instances",
+            "Description": "Test instance stop",
+            "Targets": {
+              "Instances": "StopInstances"
+            }
+          }
+        },
+        "ClientToken": "clienttoken3",
+        "Targets": {
+          "StopInstances": {
+            "ResourceType": "aws:ec2:instance",
+            "ResourceTags": {
+              "FISAction": "Stop"
+            },
+            "Filters": [
+              {
+                "Path": "VpcId",
+                "Values": [
+                  "${VpcID}"
+                ]
+              }
+            ],
+            "SelectionMode": "ALL"
+          }
+        },
+        "Description": "Test instances stop",
+        "RoleArn": "${FISRole}",
+        "StopConditions": [
+          {
+            "Source": "none"
+          }
+        ]
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:createExperimentTemplate",
+      "Next": "StopInstances"
+    },
+    "StopInstances": {
+      "Type": "Task",
+      "Parameters": {
+        "ClientToken": "clienttoken4",
+        "ExperimentTemplateId.$": "$.ExperimentTemplate.Id"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:startExperiment",
+      "Next": "GetExperiment (1)"
+    },
+    "GetExperiment (1)": {
+      "Type": "Task",
+      "Next": "Choice (1)",
+      "Parameters": {
+        "Id.$": "$.Experiment.Id"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:getExperiment"
+    },
+    "Choice (1)": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Experiment.State.Status",
+          "StringEquals": "failed",
+          "Next": "Fail"
+        },
+        {
+          "Not": {
+            "Variable": "$.Experiment.State.Status",
+            "StringEquals": "completed"
+          },
+          "Next": "GetExperiment (1)"
+        }
+      ],
+      "Default": "EC2TerminateExperimentTemplate"
+    },
+    "EC2TerminateExperimentTemplate": {
+      "Type": "Task",
+      "Next": "TerminateInstances",
+      "Parameters": {
+        "Actions": {
+          "stop": {
+            "ActionId": "aws:ec2:terminate-instances",
+            "Description": "Test instance terminate",
+            "Targets": {
+              "Instances": "TerminateInstances"
+            }
+          }
+        },
+        "ClientToken": "clienttoken5",
+        "Targets": {
+          "TerminateInstances": {
+            "ResourceType": "aws:ec2:instance",
+            "ResourceTags": {
+              "FISAction": "Terminate"
+            },
+            "Filters": [
+              {
+                "Path": "VpcId",
+                "Values": [
+                  "${VpcID}"
+                ]
+              }
+            ],
+            "SelectionMode": "ALL"
+          }
+        },
+        "Description": "Terminate Instances",
+        "RoleArn": "${FISRole}",
+        "StopConditions": [
+          {
+            "Source": "none"
+          }
+        ]
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:createExperimentTemplate"
+    },
+    "TerminateInstances": {
+      "Type": "Task",
+      "Parameters": {
+        "ClientToken": "clienttoken6",
+        "ExperimentTemplateId.$": "$.ExperimentTemplate.Id"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:startExperiment",
+      "Next": "GetExperiment (2)"
+    },
+    "GetExperiment (2)": {
+      "Type": "Task",
+      "Next": "Choice (2)",
+      "Parameters": {
+        "Id.$": "$.Experiment.Id"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:fis:getExperiment"
+    },
+    "Choice (2)": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Experiment.State.Status",
+          "StringEquals": "failed",
+          "Next": "Fail"
+        },
+        {
+          "Not": {
+            "Variable": "$.Experiment.State.Status",
+            "StringEquals": "completed"
+          },
+          "Next": "GetExperiment (2)"
+        }
+      ],
+      "Default": "Success"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
