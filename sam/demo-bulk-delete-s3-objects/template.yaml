@@ -1,0 +1,29 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Example of how to bulk delete objects from S3 using Step Functions Distributed Map"
+
+Resources:
+  BulkDeleteObjectsFromS3:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: "STANDARD"
+      Policies:
+        - Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action:
+              - s3:*
+              Resource: '*'
+            - Effect: Allow
+              Action:
+              - states:StartExecution
+              Resource: '*'
+      DefinitionUri: bulk-delete-objects-from-s3.asl.json
+        
+
+       
+
+
+  

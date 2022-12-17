@@ -1,0 +1,131 @@
+{
+    "Comment": "A state machine to bulk delete objects from S3 using Distributed Map",
+    "StartAt": "Confirm Bucket Provided",
+    "States": {
+      "Confirm Bucket Provided": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Not": {
+              "Variable": "$.bucket",
+              "IsPresent": true
+            },
+            "Next": "Fail - No Bucket"
+          }
+        ],
+        "Default": "Confirm if Prefix"
+      },
+      "Confirm if Prefix": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Not": {
+              "Variable": "$.prefix",
+              "IsPresent": true
+            },
+            "Next": "Generate Parameters - Without Prefix"
+          }
+        ],
+        "Default": "Generate Parameters - With Prefix"
+      },
+      "Generate Parameters - Without Prefix": {
+        "Type": "Pass",
+        "Parameters": {
+          "Bucket.$": "$.bucket",
+          "Prefix": ""
+        },
+        "ResultPath": "$.list_parameters",
+        "Next": "S3 object keys"
+      },
+      "Fail - No Bucket": {
+        "Type": "Fail",
+        "Error": "InsuffcientArguments",
+        "Cause": "No Bucket was provided"
+      },
+      "Generate Parameters - With Prefix": {
+        "Type": "Pass",
+        "Next": "S3 object keys",
+        "Parameters": {
+          "Bucket.$": "$.bucket",
+          "Prefix.$": "$.prefix"
+        },
+        "ResultPath": "$.list_parameters"
+      },
+      "S3 object keys": {
+        "Type": "Map",
+        "ItemProcessor": {
+          "ProcessorConfig": {
+            "Mode": "DISTRIBUTED",
+            "ExecutionType": "EXPRESS"
+          },
+          "StartAt": "Create Object Identifier Array",
+          "States": {
+            "Create Object Identifier Array": {
+              "Type": "Map",
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "Create Object Identifier",
+                "States": {
+                  "Create Object Identifier": {
+                    "Type": "Pass",
+                    "End": true,
+                    "Parameters": {
+                      "Key.$": "$.Key"
+                    }
+                  }
+                }
+              },
+              "ItemsPath": "$.Items",
+              "ResultPath": "$.object_identifiers",
+              "Next": "Delete Objects"
+            },
+            "Delete Objects": {
+              "Type": "Task",
+              "End": true,
+              "Parameters": {
+                "Bucket.$": "$.BatchInput.bucket",
+                "Delete": {
+                  "Objects.$": "$.object_identifiers"
+                }
+              },
+              "Resource": "arn:aws:states:::aws-sdk:s3:deleteObjects",
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "States.ALL"
+                  ],
+                  "BackoffRate": 2,
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 6
+                }
+              ],
+              "ResultSelector": {
+                "Deleted.$": "$.Deleted",
+                "RetryCount.$": "$$.State.RetryCount"
+              }
+            }
+          }
+        },
+        "ItemReader": {
+          "Resource": "arn:aws:states:::s3:listObjectsV2",
+          "Parameters": {
+            "Bucket.$": "$.list_parameters.Bucket",
+            "Prefix.$": "$.list_parameters.Prefix"
+          }
+        },
+        "MaxConcurrency": 5,
+        "Label": "S3objectkeys",
+        "ItemBatcher": {
+          "MaxInputBytesPerBatch": 204800,
+          "MaxItemsPerBatch": 1000,
+          "BatchInput": {
+            "bucket.$": "$.list_parameters.Bucket"
+          }
+        },
+        "ResultPath": null,
+        "End": true
+      }
+    }
+  }
