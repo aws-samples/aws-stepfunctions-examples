@@ -94,7 +94,7 @@ public class StepFunctionsLocalJUnitTest {
     List<HistoryEvent> results = historyResponse.events().stream()
       .filter(h -> h.type() == HistoryEventType.TASK_STATE_EXITED &&
         h.stateExitedEventDetails().name().equalsIgnoreCase("CustomerAddedToFollowup"))
-      .collect(Collectors.toList());
+      .toList();
 
     assertEquals(1, results.size());
   }
@@ -120,7 +120,7 @@ public class StepFunctionsLocalJUnitTest {
     List<HistoryEvent> results = historyResponse.events().stream()
       .filter(h -> h.type() == HistoryEventType.TASK_STATE_EXITED &&
         h.stateExitedEventDetails().name().equalsIgnoreCase("NegativeSentimentDetected"))
-      .collect(Collectors.toList());
+      .toList();
 
     assertEquals(1, results.size());
   }
@@ -154,7 +154,7 @@ public class StepFunctionsLocalJUnitTest {
             h.taskSucceededEventDetails().resource().equalsIgnoreCase("comprehend:detectSentiment")
         )
       )
-      .collect(Collectors.toList());
+      .toList();
 
     assertEquals(4, results.size());
     assertEquals(
