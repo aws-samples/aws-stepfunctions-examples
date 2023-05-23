@@ -1,0 +1,107 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Steady State Event Generator: Demonstration of workflow to generate steady state emission of events to EventBridge."
+
+Parameters:
+  ParameterPrefix:
+    Type: String
+    Default: "demo-event-emitter"
+    Description: "Prefix to be used in names of the things created by this stack."
+  
+
+Resources:
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - events:PutTargets
+                - events:PutRule
+                - events:PutEvents
+                - events:DescribeRule
+                - states:StartExecution
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - logs:PutLogEvents
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - cloudwatch:PutMetricData
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource: !Join ["",["arn:",!Ref AWS::Partition,":dynamodb:",!Ref AWS::Region,":",!Ref AWS::AccountId,":table/",!Join ["",[!Ref ParameterPrefix, "_event-pusher-config"]] ]]
+              -
+                Effect: Allow
+                Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+                - sqs:SendMessage
+                Resource: !GetAtt SQSQueue.Arn
+
+  StateMachineCreateDataset:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterPrefix, "_generate-steady-state-workload"]]
+      Role: !GetAtt ApplicationRole.Arn
+      DefinitionSubstitutions:
+        dynamodb_table_config: !Join ["",[!Ref ParameterPrefix, "_event-pusher-config"]]
+        sqs_queue_url: !GetAtt SQSQueue.QueueUrl
+      DefinitionUri: statemachines/event_emitter.yaml
+
+
+  TableCurrentTicketStatus:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "config_id"
+          AttributeType: "S"
+      BillingMode: PAY_PER_REQUEST
+      KeySchema: 
+        - 
+          AttributeName: "config_id"
+          KeyType: "HASH"
+      TableName: !Join ["",[!Ref ParameterPrefix, "_event-pusher-config"]] 
+  
+  SQSQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 60
+
+
+
+  
