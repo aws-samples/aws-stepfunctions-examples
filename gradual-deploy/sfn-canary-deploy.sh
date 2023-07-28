@@ -22,7 +22,7 @@
 # 
 # For a fuller example, that also demonstrates linear (or rolling) deployments,
 # please see
-# https://github.com/aws-samples/aws-stepfunctions-examples/gradual-deployments/sfndeploy.py
+# https://github.com/aws-samples/aws-stepfunctions-examples/blob/main/gradual-deploy/sfndeploy.py
 
 set -euo pipefail
 
