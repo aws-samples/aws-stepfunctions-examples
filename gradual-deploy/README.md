@@ -7,7 +7,7 @@ deployments in your CI/CD environments of choice.
 
 The Python example shows how to use an AWS SDK to manage a gradual deployment,
 whereas the Bash script shows which AWS CLI commands you can use if you prefer. 
-An alternative is to [use CloudFormation for Step Functions Gradual Deployments](TODO: Linkhere).
+An alternative is to [use CloudFormation for Step Functions Gradual Deployments](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-stepfunctions-statemachinealias.html).
 
 ## Python API example
 ### Prerequisites
@@ -240,7 +240,7 @@ The script takes the following actions:
    uploaded as the next version.
 3. Note that if the script fails later on it will NOT undeploy any revision
    uploaded or promoted to a version in the first two steps.
-   See [Cloudformation](TODO: link here) for provisioning with full rollback.
+   See [Cloudformation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-stepfunctions-statemachinealias.html) for provisioning with full rollback.
 4. If `--publish-revision` is not set, the most recent published version of the
    state machine will deploy. This is useful if you have some other
    process or tool that updates your state machine definitions, and you just
