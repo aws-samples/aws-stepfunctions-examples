@@ -1,0 +1,60 @@
+{
+    "Comment": "A description of my state machine",
+    "StartAt": "Check current running executions",
+    "States": {
+      "Check current running executions": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "OutputPath": "$.flag",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${LambdaConcurrencyController}"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException",
+              "Lambda.TooManyRequestsException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Over limit?"
+      },
+      "Over limit?": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.flag.Payload.",
+            "StringEquals": "proceed",
+            "Next": "Step Functions StartExecution"
+          },
+          {
+            "Variable": "$.flag.Payload",
+            "StringEquals": "wait",
+            "Next": "Fail"
+          }
+        ]
+      },
+      "Step Functions StartExecution": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::states:startExecution",
+        "Parameters": {
+          "StateMachineArn": "${DoSomeWorkFlow}",
+          "Input": {
+            "StatePayload": "Hello from Step Functions!",
+            "AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$": "$$.Execution.Id"
+          }
+        },
+        "End": true
+      },
+      "Fail": {
+        "Type": "Fail",
+        "Error": "\"Reaching maximum allowed executions\""
+      }
+    }
+  }
