@@ -1,0 +1,13 @@
+# packages
+node_modules
+
+# logs
+*.log
+
+# drawio diagram temp files
+*.drawio.bkp
+*.drawio.dtmp
+
+# misc files
+.idea
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "name": "serverless-file-share",
+  "version": "1.0.0",
+  "license": "MIT",
+  "scripts": {
+    "install": "cd cdk && npm install && cd ../ui && npm install && cd -",
+    "build": "cd ui && npm run build && cd -",
+    "start": "cd ui && npm run config && npm run start && cd -",
+    "deploy": "cd cdk && npm run deploy && cd -",
+    "destroy": "cd cdk && npm run destroy && cd -",
+    "clean": "rm -rf ./node_modules && cd cdk && npm run clean && cd ../ui && npm run clean && cd -"
+  }
+}
