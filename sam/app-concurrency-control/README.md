@@ -14,11 +14,7 @@ The concurrency controller Lambda function will check, for a given SFN ARN, the 
 
 * Single SAM template is used to create all resources
 * Test runner: Lambda function that generates test messages to SQS (e.g., 1k - 10k)
-<<<<<<< HEAD
 * SQS provides trigger for Concurrency controller Lambda function, with batch size of 1 and maximum concurrency set to 2 
-=======
-* SQS provides trigger for Concurrency controller Lambda function, with batch size of 1 and maximum concurrency set to 2
->>>>>>> 8e3a252403adbc35dded3b9593495c39bb99c322
 * A random delay up to 1 sec (jitter) is added when listExecutions is called to avoid racing condition
 * Concurrency Threshold set to 10 in SSM Param Store
 * listExecution() API call is eventual consistency and results are best effort (no SLA) → Concurrency can exceed threshold value on occasion 
