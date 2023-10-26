@@ -53,7 +53,9 @@
     "react-scripts": {
       "typescript": "^5"
     },
-    "nth-check": "2.1.1"
+    "nth-check": "2.1.1",
+    "postcss": "^8.4.31",
+    "@adobe/css-tools": "^4.3.1"
   },
   "eslintConfig": {
     "extends": [
