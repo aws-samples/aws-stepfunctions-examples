@@ -20,6 +20,7 @@ export class AthenaView extends Construct {
     const { viewName, sqlQuery, database, outputBucket, tables } = props;
 
     const iamResources = [
+      cdk.Arn.format({ service: 'athena', resource: 'workgroup', resourceName: '*' }, cdk.Stack.of(this)),
       cdk.Arn.format({ service: 'glue', resource: 'catalog' }, cdk.Stack.of(this)),
       cdk.Arn.format({ service: 'glue', resource: 'database', resourceName: database.databaseName }, cdk.Stack.of(this)),
       cdk.Arn.format({ service: 'glue', resource: 'table', resourceName: viewName }, cdk.Stack.of(this)),
@@ -32,7 +33,7 @@ export class AthenaView extends Construct {
     new AwsCustomResource(this, id, {
       onUpdate: {
         service: 'Athena',
-        action: 'startQueryExecution',
+        action: 'StartQueryExecution',
         parameters: {
           QueryString: `CREATE OR REPLACE VIEW ${viewName} AS ${sqlQuery}`,
           ResultConfiguration: {
@@ -47,7 +48,7 @@ export class AthenaView extends Construct {
       policy: AwsCustomResourcePolicy.fromStatements([
         new iam.PolicyStatement({
           actions: [
-            'athena:startQueryExecution',
+            'athena:StartQueryExecution',
             'athena:GetQueryExecution',
             'glue:GetTable',
             'glue:GetDatabase',
