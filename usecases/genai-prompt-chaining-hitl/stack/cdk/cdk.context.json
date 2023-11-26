@@ -1,0 +1,11 @@
+{
+  "params": {
+    "SQS_ESM_CONCURRENCY":4,
+    "EB_CONNECTION_ARN":"arn:aws:events:us-east-1:269716726085:connection/openai/f6ad69e5-adbf-44ab-971c-ec894c8122d8",
+    "PUBLIC_INFERENCE_ENDPOINT": "https://api.openai.com/v1/chat/completions"
+    
+  },
+  "acknowledged-issue-numbers": [
+    19836
+  ]
+}
