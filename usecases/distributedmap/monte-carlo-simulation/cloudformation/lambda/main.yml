@@ -1,0 +1,1214 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Creates a Stack using Fargate"
+
+##############################################################
+#
+# PARAMETERS
+#
+##############################################################
+Parameters:
+  Prefix:
+    Type: String
+    Default: sfn-lambda
+    Description: This prefix will be prepended to all resource names
+  
+  RecordCount:
+    Type: Number
+    Default: 500000
+    Description: Sets how many records will be generated
+
+  BatchSize:
+    Type: Number
+    Default: 100
+    Description: Sets the size of each batch for DMap
+  
+  ProcessConcurrency:
+    Type: Number
+    Default: 1000
+    Description: Sets the max concurrency 
+  
+  FedRate:
+    Type: Number
+    Default: 8
+    Description: The fictitious federate rate
+
+Resources:
+##############################################################
+#
+# S3 BUCKETS
+#
+##############################################################
+  SourceS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join ['-', [!Ref Prefix, 'source', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'source', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+  DestinationS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join ['-', [!Ref Prefix, 'destination', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'destination', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+##############################################################
+#
+# LAMBDA IAM ROLE
+#
+##############################################################
+  LambdaPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      PolicyName: !Join ['-', [!Ref Prefix, 'lambda-policy', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      RoleName: !Ref LambdaRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - states:StartExecution
+              - states:DescribeExecution
+              - states:StopExecution
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource:
+              - !Join ['', [!GetAtt SourceS3Bucket.Arn, '*']]
+              - !Join ['', [!GetAtt DestinationS3Bucket.Arn, '*']]
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "lambda.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      Description: Lambda Role reused by all Lambda Functions in Stack
+      RoleName: !Join ['-', [!Ref Prefix, 'lambda-role', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'lambda-role', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+##############################################################
+#
+# LAMBDA FUNCTIONS
+#
+##############################################################
+  SeedFileGenerationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join ['-', [!Ref Prefix, 'seedgen', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Runtime: python3.10
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Timeout: 180
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          RECORDCOUNT: !Ref RecordCount
+      Code:
+        ZipFile: |
+          import boto3
+          import csv
+          from io import StringIO
+          import os
+
+          region = os.getenv('REGION')
+          count = os.getenv('RECORDCOUNT')
+          s3_client = boto3.client('s3', region_name=region)
+          s3 = boto3.resource('s3')
+
+          def lambda_handler(event, context):
+            data = []
+            for i in range(1, (int(count) + 1)):
+              data.append({
+                'num': i
+              })
+
+            stream = StringIO()
+            headers = list(data[0].keys())
+            writer = csv.DictWriter(stream, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(data)
+            body = stream.getvalue()
+
+            dst = s3.Object(event['bucket'], 'inventory/numbers.csv')
+            dst.put(Body=body)
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'seedgen', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+  
+  DataProcessLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join ['-', [!Ref Prefix, 'dataproc', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Runtime: python3.10
+      Layers:
+        - !Join [':', ['arn:aws:lambda', !Ref AWS::Region, '336392948345', 'layer', 'AWSSDKPandas-Python310:5']]
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Timeout: 180
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          RECORDCOUNT: !Ref RecordCount
+          FEDRATE: !Ref FedRate
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import os
+          import pandas as pd
+          from io import StringIO
+          from botocore.config import Config
+          from random import randint
+
+          # set initial variables for the rest of the script
+          config = Config(retries = dict(max_attempts = 2, mode = 'standard'))
+          region = os.getenv('REGION')
+          count = os.getenv('RECORDCOUNT')
+          fedrate = os.getenv('FEDRATE')
+          s3 = boto3.client('s3', region_name=region)
+          s3_resource = boto3.resource('s3', config=config)
+
+          # this function is simulating calculating the percentage of likelihood
+          # a given loan would default based on a given federal rate and the existing
+          # rate and payment of the loan. for simplicity we are simply returning
+          # a random percentage    
+          def calculate_default(df, fedrate):
+            df['WillDefault'] = (randint(1,100)/100)
+            return df
+
+          # you always need a little error handling :) in this case what we
+          # are specifically looking for is SlowDown errors from S3. when that 
+          # occurs we are raising the error to let Step Functions handle it
+          def handle_processing_errors(error):
+            print("botocore Error Caught")
+            if error.response['Error']['Code'] == 'SlowDown':
+              print ("Client SlowDown Error")
+              # Throw 503 from S3
+              class SlowDown(Exception):
+                pass
+              raise SlowDown('Reduce S3 Requests')
+
+          # this function just prepends zeroes to the object names
+          # to make it prettier and easier to read
+          def get_zeroes(current, total):
+            x = total - len(str(current))
+            ret = ""
+            for i in range(0, x):
+              ret = ret + "0"
+            return ret + str(current)
+
+          # this function finds the lowest value in the list of object names
+          def get_start(id,start):
+            ret = id if id < int(start) or int(start) == 0 else int(start)
+            return ret
+
+          # this function finds the highest value in the list of object names
+          def get_end(id,end):
+            ret = id if id > int(end) else int(end)
+            return ret
+
+          # this functions writes to s3
+          def write_output(bucket, batch, rowsper, prefix, start, end):
+            # write the data
+            buffer = StringIO()
+            batch.to_csv(buffer, index=False)
+            key = prefix + "/data-gen-" + get_zeroes(start, len(count)) + ".csv" if rowsper == 1 else prefix + "/data-gen-batch-" + get_zeroes(start, len(count)) + "_" + get_zeroes(end, len(count)) + ".csv"
+
+            # write the object
+            try:
+              s3_resource.Object(bucket, key).put(Body=buffer.getvalue())
+            except botocore.exceptions.ClientError as error:
+              handle_processing_errors(error)
+
+          # this is the main function of the script.
+          def lambda_handler(event, context):
+            # set variables passed from the Set Variables step of the Step Function workflow
+            prefix = event['BatchInput']['workshop_variables']['output_prefix']
+            bucket = event['BatchInput']['workshop_variables']['output_bucket']
+            rowsper = event['BatchInput']['workshop_variables']['output_rows_per_file']
+            start = 0
+            end = 0
+            counter = 0
+            x = 0
+            
+            # instantiate the initial dataframe
+            batch = pd.DataFrame()
+
+            # load the full batch from Step Functions into the dataframe
+            for item in event['Items']:
+              # our s3 inventory report may contain objects we don't care about. this
+              # conditional will ensure we only process source CSV Files, 
+              # skipping folders an other metadata object entries.
+              if str(item['Key']).find(".csv") == -1: continue
+
+              # increment our counter
+              counter+=1
+              x+=1
+
+              # with that out of the way lets get our data
+              try:
+                source = s3.get_object(Bucket=item['Bucket'], Key=item['Key'])
+                content = source['Body'].read().decode('utf-8')
+              except botocore.exceptions.ClientError as error:
+                handle_processing_errors(error)
+              
+              # with data in hand we can load the content into a dataframe
+              df = pd.read_csv(StringIO(content))
+
+              # calculate our percentage for defaulting
+              df = calculate_default(df, fedrate)
+
+              # and finally add it to our batch of dataframes 
+              batch = pd.concat([batch,df])
+
+              # our file names will include the first and last object
+              # id to make them easier to find. 
+              id = int(item['Key'].split('-')[2].replace('.csv','')) 
+              start = get_start(id, start)
+              end = get_end(id, end)
+              
+              # do we need to write yet? we'll check to see we hit that yet
+              if counter == rowsper or x >= len(event['Items']):
+                # write the object(s)
+                write_output(bucket, batch, rowsper, prefix, str(start), str(end))
+
+                # rinse and repeat :)
+                start = 0
+                end = 0
+                counter = 0
+                batch.empty
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'dataproc', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+  DataGenerationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join ['-', [!Ref Prefix, 'datagen', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Runtime: python3.10
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Timeout: 900
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          RECORDCOUNT: !Ref RecordCount
+      Code:
+        ZipFile: |
+          import boto3
+          import csv
+          from random import uniform, randrange, randint
+          from datetime import datetime, timedelta
+          from io import StringIO
+          import os
+
+          region = os.getenv('REGION')
+          count = os.getenv('RECORDCOUNT')
+          s3_client = boto3.client('s3', region_name=region)
+          s3 = boto3.resource('s3')
+          terms = [12, 24, 36, 48, 60, 72, 84, 96, 108, 120]
+          term = terms[randint(0,9)]
+          end = datetime.now()
+          start = end - timedelta(days=((term / 12) * 365))
+
+          def random_date(start, end):
+            delta = end - start
+            int_delta = (delta.days * 24 * 60 * 60) + delta.seconds
+            random_second = randrange(int_delta)
+            return start + timedelta(seconds=random_second)
+        
+          def get_zeroes(current, total):
+            x = total - len(str(current))
+            ret = ""
+            for i in range(0, x):
+              ret = ret + "0"
+            return ret + str(current)
+
+          def lambda_handler(event, context):
+            batch = []
+            length = len(str(count))
+            first = get_zeroes(event['Items'][0]['num'], length)
+            last = get_zeroes(event['Items'][len(event['Items']) - 1]['num'], length)
+            for item in event['Items']:
+              data = [{
+                'AccountID': randint(1000000,9999999),
+                'ZipCode': randint(10000,99999),
+                'Rate': round(uniform(1.0,9.9), 2),
+                'Payment': randint(1000,10000),
+                'LoanAmount': randint(10000,10000000),
+                'LoanTerm': term,
+                'OriginationDate': random_date(start, end).strftime('%m/%d/%Y'),
+                'GrossIncome': randint(50000,5000000)
+              }]
+
+              stream = StringIO()
+              headers = list(data[0].keys())
+              writer = csv.DictWriter(stream, fieldnames=headers)
+              writer.writeheader()
+              writer.writerows(data)
+              body = stream.getvalue()
+
+              number = get_zeroes(item['num'], length)
+
+              dst = s3.Object(event['BatchInput']['bucket'], 'data/data-gen-' + str(number) + '.csv')
+              dst.put(Body=body)
+
+              batch.append({
+                'Key': 'data/data-gen-' + number + '.csv',
+                'Size': len(body.encode('utf-8'))
+              })
+            
+            stream = StringIO()
+            headers = list(batch[0].keys())
+            writer = csv.DictWriter(stream, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(batch)
+            body = stream.getvalue()
+
+            dst = s3.Object(event['BatchInput']['bucket'], 'temp/data-batch-' + str(first) + '-' + str(last) + '.csv')
+            dst.put(Body=body)
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'datagen', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+  InventoryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join ['-', [!Ref Prefix, 'inventory', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Runtime: python3.10
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Timeout: 300
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          RECORDCOUNT: !Ref RecordCount
+      Code:
+        ZipFile: |
+          import boto3
+          import csv
+          import gzip
+          from io import StringIO
+          from io import BytesIO
+          from botocore.client import Config
+          import os
+
+          # set a few variables we'll use to get our data
+          region = os.getenv('REGION')
+          count = os.getenv('RECORDCOUNT')
+          s3_client = boto3.client('s3', region_name=region)
+          s3 = boto3.resource('s3')
+        
+          def get_zeroes(current, total):
+            x = total - len(str(current))
+            ret = ""
+            for i in range(0, x):
+              ret = ret + "0"
+            return ret + str(current)
+
+          def lambda_handler(event, context):
+            data = []
+            length = len(str(count))
+            start = 0
+            end = 0
+            for x in range(0, len(event['Items'])):
+              source = s3_client.get_object(Bucket=event['BatchInput']['bucket'], Key=event['Items'][x]['Key'])
+              content = source.get('Body').read().decode('utf-8')
+              buf = StringIO(content)
+              reader = csv.DictReader(buf)
+              objects = list(reader)
+            
+              for item in objects:
+                start = int(item['Key'].split('-')[2].replace('.csv','')) if int(item['Key'].split('-')[2].replace('.csv','')) < int(start) or int(start) == 0 else int(start)
+                end = int(item['Key'].split('-')[2].replace('.csv','')) if int(item['Key'].split('-')[2].replace('.csv','')) > int(end) else int(end)
+                data.append({
+                  'Bucket': event['BatchInput']['bucket'],
+                  'Key': item['Key'],
+                  'Size': item['Size']
+                })
+
+            mem = BytesIO()
+            with gzip.GzipFile(fileobj=mem, mode='w') as gz:
+              stream = StringIO()
+              headers = list(data[0].keys())
+              writer = csv.DictWriter(stream, fieldnames=headers)
+              writer.writerows(data)
+
+              gz.write(stream.getvalue().encode())
+              gz.close()
+              mem.seek(0)
+
+            s3_client.upload_fileobj(Fileobj=mem, Bucket=event['BatchInput']['bucket'], Key='inventory/data-gen-' + str(get_zeroes(start, length)) + '-' + str(get_zeroes(end, length)) + '.csv.gz')
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'inventory', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+  ManifestLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join ['-', [!Ref Prefix, 'manifest', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Runtime: python3.10
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Timeout: 180
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          RECORDCOUNT: !Ref RecordCount
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          from datetime import datetime
+          import time
+
+          s3_client = boto3.client("s3")
+          s3 = boto3.resource("s3")
+
+          def lambda_handler(event, context):
+            files = []
+            for item in event['Items']:
+              files.append({
+                "key": item['Key'],
+                "size": item['Size'],
+                "MD5checksum": item['Etag'].replace('"','')
+              })
+            manifest = {
+              "sourceBucket" : event['BatchInput']['bucket'],
+              "destinationBucket" : "arn:aws:s3:::" + event['BatchInput']['bucket'],
+              "version" : "2016-11-30",
+              "creationTimestamp" : time.mktime(datetime.now().timetuple()),
+              "fileFormat" : "CSV",
+              "fileSchema" : "Bucket, Key, Size",
+              "files" : files
+            }
+            dst = s3.Object(event['BatchInput']['bucket'], 'inventory/manifest.json')
+            dst.put(Body=(bytes(json.dumps(manifest).encode('UTF-8'))))
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'manifest', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+  InventoryPartitionLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join ['-', [!Ref Prefix, 'inventorypartition', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Runtime: python3.10
+      Layers:
+        - !Join [':', ['arn:aws:lambda', !Ref AWS::Region, '336392948345', 'layer', 'AWSSDKPandas-Python310:5']]
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      MemorySize: 512
+      Timeout: 180
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          RECORDCOUNT: !Ref RecordCount
+          SOURCEBUCKET: !Ref SourceS3Bucket
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import csv
+          import pandas as pd
+          import io
+          import os
+
+          region = os.getenv('REGION')
+          count = os.getenv('RECORDCOUNT')
+          s3_client = boto3.client('s3', region_name=region)
+          s3_resource = boto3.resource('s3')
+
+          def lambda_handler(event, context):
+            bucket_v = event['inventory']['bucket']
+            manifest_key_v = event['inventory']['key']
+            new_manifest_key_prefix = event['inventory']['output_prefix']
+            input_sampling = event['workshop_variables']['input_sampling']
+            original_manifest = s3_client.get_object(Bucket=bucket_v, Key=manifest_key_v)
+            original_manifest_json = json.loads(original_manifest['Body'].read())
+            print(original_manifest_json)
+            bucket = s3_resource.Bucket(bucket_v)
+            df_batch_inventory = pd.DataFrame()
+            output_manifest_manifest = {
+              'files': []
+            }
+            output_manifest_manifest['bucket'] = bucket_v 
+            
+            # Record Counting Variables
+            total_records = 0
+            output_records = 0
+            
+            #If not sampling the input (sampling = 1) then we can just re-write manifest.json files only
+            manifest_counter = 1
+            if input_sampling == 1:
+              for file in original_manifest_json['files']:
+                inventory_manifest = {
+                  'files': []
+                }
+                inventory_manifest['sourceBucket'] = original_manifest_json['sourceBucket']
+                inventory_manifest['destinationBucket'] = original_manifest_json['destinationBucket']
+                inventory_manifest['fileFormat'] = original_manifest_json['fileFormat']
+                inventory_manifest['fileSchema'] = original_manifest_json['fileSchema']
+                inventory_manifest['files'].append({
+                  'key': file['key'],
+                  'size': file['size']
+                })
+                inventory_manifest_json = json.dumps(inventory_manifest)
+                s3_resource.Object(bucket_v, new_manifest_key_prefix + 'manifest--{}.json'.format(manifest_counter)).put(Body=inventory_manifest_json)
+                output_manifest_manifest['files'].append({
+                  'key': new_manifest_key_prefix + 'manifest--{}.json'.format(manifest_counter),
+                  'bucket': bucket_v
+                })
+                manifest_counter += 1
+            #If sampling or filtering the input dataset we will read and process the inventory CVS's and create modified versions for processing        
+            else:
+              im = 1
+              i_files = 1
+              for file in original_manifest_json['files']:
+                obj = s3_resource.Object(bucket_v,file['key'])
+                print(obj.key)
+                obj_data = io.BytesIO(obj.get()['Body'].read())
+                # if file['key'] contains .gz then we are reading the .gz file and not the .csv file
+                if '.gz' in file['key']:
+                  df_temp = pd.read_csv(obj_data, compression='gzip', names=['Bucket', 'Key', 'Size'], header=None)
+                else:
+                  df_temp = pd.read_csv(obj_data, names=['Bucket', 'Key', 'Size'], header=None)
+                total_records += len(df_temp)
+                print("Current observed record count: " + format(total_records))
+                df_batch_inventory = pd.concat([df_batch_inventory,df_temp])
+                if (len(df_batch_inventory) > 250000) or i_files == len(original_manifest_json['files']):
+                  inventory_manifest = {
+                    'files': []
+                  }
+                  inventory_manifest['sourceBucket'] = original_manifest_json['sourceBucket']
+                  inventory_manifest['destinationBucket'] = original_manifest_json['destinationBucket']
+                  inventory_manifest['fileFormat'] = original_manifest_json['fileFormat']
+                  inventory_manifest['fileSchema'] = original_manifest_json['fileSchema']
+                  df_batch_inventory = df_batch_inventory[::input_sampling]
+                  csv_buffer = io.StringIO()
+                  output_records += len(df_batch_inventory)
+                  print("Output records this batch: " + format(len(df_batch_inventory)))
+                  print("Total output records to this point: " + format(output_records))
+                  df_batch_inventory.to_csv(csv_buffer, index=False, header=False)
+                  csv_tmp_name = new_manifest_key_prefix + 'inventory-' + format(im) + '.csv'
+                  s3_resource.Object(bucket_v, csv_tmp_name.format(im)).put(Body=csv_buffer.getvalue())
+                  inventory_manifest['files'].append({
+                    'key': csv_tmp_name,
+                    'size': len(csv_buffer.getvalue())
+                  })
+                  print(inventory_manifest)
+                  inventory_manifest_json = json.dumps(inventory_manifest)
+                  s3_resource.Object(bucket_v, new_manifest_key_prefix + 'manifest--{}.json'.format(im)).put(Body=inventory_manifest_json)
+                  output_manifest_manifest['files'].append({
+                    'key': new_manifest_key_prefix + 'manifest--{}.json'.format(im),
+                    'bucket': bucket_v
+                  })
+                  im += 1
+                  df_batch_inventory = pd.DataFrame(None)
+                i_files += 1
+            return {
+              'statusCode': 200,
+              'body': output_manifest_manifest
+            }
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'inventorypartition', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+  ScriptFeederLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join ['-', [!Ref Prefix, 'scriptfeeder', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Runtime: python3.10
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      MemorySize: 256
+      Timeout: 180
+      Environment:
+        Variables:
+          REGION: !Ref AWS::Region
+          SOURCEBUCKET: !Ref SourceS3Bucket
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+
+          # set a few variables we'll use to get our data
+          region = os.getenv('REGION')
+          bucket = os.getenv('SOURCEBUCKET')
+
+          s3_client = boto3.client('s3', region_name=region)
+          s3 = boto3.resource('s3')
+
+          def lambda_handler(event, context):
+            body = """#!/usr/bin/python3
+          import boto3
+          import botocore
+          import os
+          import json
+          import pandas as pd
+          from io import StringIO
+          from botocore.config import Config
+          from random import randint
+
+          # set initial variables for the rest of the script
+          config = Config(
+            connect_timeout=65,
+            read_timeout=65,
+            retries={'max_attempts': 0}
+          )
+          region = os.getenv('REGION')
+          count = os.getenv('RECORDCOUNT')
+          fedrate = os.getenv('FEDRATE')
+          client = boto3.client('stepfunctions', region_name=region, config=config)
+          s3 = boto3.client('s3', region_name=region)
+          s3_resource = boto3.resource('s3')
+
+          # set a few variables we'll use to get our data
+          activity_arn = os.getenv('ACTIVITY_ARN')
+          worker_name = os.getenv('HOSTNAME')
+
+          # this function is simulating calculating the percentage of likelihood
+          # a given loan would default based on a given federal rate and the existing
+          # rate and payment of the loan. for simplicity we are simply returning
+          # a random percentage    
+          def calculate_default(df, fedrate):
+            df['WillDefault'] = (randint(1,100)/100)
+            return df
+
+          # you always need a little error handling :) in this case what we
+          # are specifically looking for is SlowDown errors from S3. when that 
+          # occurs we are raising the error to let Step Functions handle it
+          def handle_processing_errors(error):
+            print("botocore Error Caught")
+            if error.response['Error']['Code'] == 'SlowDown':
+              print ("Client SlowDown Error")
+              # Throw 503 from S3
+              class SlowDown(Exception):
+                pass
+              raise SlowDown('Reduce S3 Requests')
+
+          # this function just prepends zeroes to the object names
+          # to make it prettier and easier to read
+          def get_zeroes(current, total):
+            x = total - len(str(current))
+            ret = ""
+            for i in range(0, x):
+              ret = ret + "0"
+            return ret + str(current)
+
+          # this function finds the lowest value in the list of object names
+          def get_start(id,start):
+            ret = id if id < int(start) or int(start) == 0 else int(start)
+            return ret
+
+          # this function finds the highest value in the list of object names
+          def get_end(id,end):
+            ret = id if id > int(end) else int(end)
+            return ret
+
+          # this functions writes to s3
+          def write_output(bucket, batch, rowsper, prefix, start, end):
+            # write the data
+            buffer = StringIO()
+            batch.to_csv(buffer, index=False)
+            key = prefix + "/data-gen-" + get_zeroes(start, len(count)) + ".csv" if rowsper == 1 else prefix + "/data-gen-batch-" + get_zeroes(start, len(count)) + "_" + get_zeroes(end, len(count)) + ".csv"
+
+            # write the object
+            try:
+              s3_resource.Object(bucket, key).put(Body=buffer.getvalue())
+            except botocore.exceptions.ClientError as error:
+              handle_processing_errors(error)
+
+          # now we start polling until we have nothing left to do. i realize this should
+          # be more functions and it's pretty gross but it works for a demo :) 
+          while True:
+            response = client.get_activity_task(
+              activityArn = activity_arn,
+              workerName = worker_name
+            )
+
+            if 'input' not in response.keys() or 'taskToken' not in response.keys():
+              print('no tasks to process...waiting 30 seconds to try again')
+              time.sleep(30)
+              continue
+
+            # setup variables to be used throughout the script
+            token = response['taskToken']
+            event = json.loads(response['input'])
+            success = True
+            cause = ""
+            error = ""
+            start = 0
+            end = 0
+            counter = 0
+            x = 0
+
+            # set variables passed from the Set Variables step of the Step Function workflow
+            prefix = event['BatchInput']['workshop_variables']['output_prefix']
+            bucket = event['BatchInput']['workshop_variables']['output_bucket']
+            rowsper = event['BatchInput']['workshop_variables']['output_rows_per_file']
+            
+            # instantiate the initial dataframe
+            batch = pd.DataFrame()
+
+            # load the full batch from Step Functions into the dataframe
+            for item in event['Items']:
+              # our s3 inventory report may contain objects we don't care about. this
+              # conditional will ensure we only process source CSV Files, 
+              # skipping folders an other metadata object entries.
+              if str(item['Key']).find(".csv") == -1: continue
+
+              # increment our counter
+              counter+=1
+              x+=1
+
+              # with that out of the way lets get our data
+              try:
+                source = s3.get_object(Bucket=item['Bucket'], Key=item['Key'])
+                content = source['Body'].read().decode('utf-8')
+              except botocore.exceptions.ClientError as error:
+                handle_processing_errors(error)
+              
+              # with data in hand we can load the content into a dataframe
+              df = pd.read_csv(StringIO(content))
+
+              # calculate our percentage for defaulting
+              df = calculate_default(df, fedrate)
+
+              # and finally add it to our batch of dataframes 
+              batch = pd.concat([batch,df])
+
+              # our file names will include the first and last object
+              # id to make them easier to find. 
+              id = int(item['Key'].split('-')[2].replace('.csv','')) 
+              start = get_start(id, start)
+              end = get_end(id, end)
+              
+              # do we need to write yet? we'll check to see we hit that yet
+              if counter == rowsper or x >= len(event['Items']):
+                # write the object(s)
+                write_output(bucket, batch, rowsper, prefix, str(start), str(end))
+
+                # rinse and repeat :)
+                start = 0
+                end = 0
+                counter = 0
+                batch.empty
+            
+            client.send_task_success(
+              taskToken = token,
+              output = "{\\"message\\": \\"success\\"}"
+            )"""
+            
+            dst = s3.Object(bucket, 'script/process.py')
+            dst.put(Body=body)
+            responseValue = 0
+            responseData = {}
+            responseData['Data'] = responseValue
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'scriptfeeder', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+  
+  ScriptFeederLambdaInvoke:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn: ScriptFeederLambda
+    Version: "1.0"
+    Properties:
+      ServiceToken: !GetAtt ScriptFeederLambda.Arn
+
+##############################################################
+#
+# STEP FUNCTIONS IAM ROLE
+#
+##############################################################
+  StepFunctionsPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      PolicyName: !Join ['-', [!Ref Prefix, 'sfn-policy', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      RoleName: !Ref StepFunctionsRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - states:StartExecution
+              - states:DescribeExecution
+              - states:StopExecution
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - events:PutTargets
+              - events:PutRule
+              - events:DescribeRule
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource:
+              - !Join ['', [!GetAtt SourceS3Bucket.Arn, '*']]
+              - !Join ['', [!GetAtt DestinationS3Bucket.Arn, '*']]
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource:
+              - !Join ['', [!GetAtt SeedFileGenerationLambda.Arn, '*']]
+              - !Join ['', [!GetAtt DataGenerationLambda.Arn, '*']]
+              - !Join ['', [!GetAtt InventoryLambda.Arn, '*']]
+              - !Join ['', [!GetAtt ManifestLambda.Arn, '*']]
+              - !Join ['', [!GetAtt InventoryPartitionLambda.Arn, '*']]
+              - !Join ['', [!GetAtt DataProcessLambda.Arn, '*']]
+
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "states.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      Description: Step Functions Role
+      RoleName: !Join ['-', [!Ref Prefix, 'sfn-role', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'sfn-role', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+##############################################################
+#
+# STEP FUNCTIONS ACTIVITY
+#
+##############################################################
+  MainSFNActivity:
+    Type: AWS::StepFunctions::Activity
+    Properties: 
+      Name: !Join ['-', [!Ref Prefix, 'activity', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Tags: 
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'activity', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+##############################################################
+#
+# STEP FUNCTIONS STATE MACHINES
+#
+##############################################################
+  DataGenerationStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Join ['-', [!Ref Prefix, 'datagen', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Definition:
+        Comment: Data Generation State Machine
+        StartAt: Seed File Generation
+        States:
+          Seed File Generation:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            OutputPath: "$.Payload"
+            Parameters:
+              Payload:
+                bucket: !Select [5, !Split [':', !GetAtt SourceS3Bucket.Arn]]
+              FunctionName: !Join [':', [!GetAtt SeedFileGenerationLambda.Arn, '$LATEST']]
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - Lambda.TooManyRequestsException
+              IntervalSeconds: 2
+              MaxAttempts: 6
+              BackoffRate: 2
+            Next: File Generation DMap
+          File Generation DMap:
+            Type: Map
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: DISTRIBUTED
+                ExecutionType: STANDARD
+              StartAt: File Generation
+              States:
+                File Generation:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke
+                  OutputPath: "$.Payload"
+                  Parameters:
+                    Payload.$: "$"
+                    FunctionName: !Join [':', [!GetAtt DataGenerationLambda.Arn, '$LATEST']]
+                  Retry:
+                  - ErrorEquals:
+                    - Lambda.ServiceException
+                    - Lambda.AWSLambdaException
+                    - Lambda.SdkClientException
+                    - Lambda.TooManyRequestsException
+                    IntervalSeconds: 2
+                    MaxAttempts: 6
+                    BackoffRate: 2
+                  End: true
+            ItemReader:
+              Resource: arn:aws:states:::s3:getObject
+              ReaderConfig:
+                InputType: CSV
+                CSVHeaderLocation: FIRST_ROW
+              Parameters:
+                Bucket: !Select [5, !Split [':', !GetAtt SourceS3Bucket.Arn]]
+                Key: inventory/numbers.csv
+            MaxConcurrency: 100
+            Label: FileGenerationDMap
+            ItemBatcher:
+              MaxItemsPerBatch: 1000
+              BatchInput:
+                bucket: !Select [5, !Split [':', !GetAtt SourceS3Bucket.Arn]]
+            ResultWriter:
+              Resource: arn:aws:states:::s3:putObject
+              Parameters:
+                Bucket: !Select [5, !Split [':', !GetAtt DestinationS3Bucket.Arn]]
+                Prefix: !Join ['-', [!Ref Prefix, 'datagen', 'results']]
+            Next: Inventory Generation DMap
+          Inventory Generation DMap:
+            Type: Map
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: DISTRIBUTED
+                ExecutionType: STANDARD
+              StartAt: Inventory Generation
+              States:
+                Inventory Generation:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke
+                  OutputPath: "$.Payload"
+                  Parameters:
+                    Payload.$: "$"
+                    FunctionName: !Join [':', [!GetAtt InventoryLambda.Arn, '$LATEST']]
+                  Retry:
+                  - ErrorEquals:
+                    - Lambda.ServiceException
+                    - Lambda.AWSLambdaException
+                    - Lambda.SdkClientException
+                    - Lambda.TooManyRequestsException
+                    IntervalSeconds: 2
+                    MaxAttempts: 6
+                    BackoffRate: 2
+                  End: true
+            ItemReader:
+              Parameters:
+                Bucket: !Select [5, !Split [':', !GetAtt SourceS3Bucket.Arn]]
+                Prefix: "temp/data-batch-"
+              Resource: arn:aws:states:::s3:listObjectsV2
+            MaxConcurrency: 100
+            Label: InventoryGenerationDMap
+            ItemBatcher:
+              MaxItemsPerBatch: 100
+              BatchInput:
+                bucket: !Select [5, !Split [':', !GetAtt SourceS3Bucket.Arn]]
+            ResultWriter:
+              Resource: arn:aws:states:::s3:putObject
+              Parameters:
+                Bucket: !Select [5, !Split [':', !GetAtt DestinationS3Bucket.Arn]]
+                Prefix: !Join ['-', [!Ref Prefix, 'inventory', 'results']]
+            Next: Manifest Generation DMap
+          Manifest Generation DMap:
+            Type: Map
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: DISTRIBUTED
+                ExecutionType: STANDARD
+              StartAt: Manifest Generation
+              States:
+                Manifest Generation:
+                  Type: Task
+                  Resource: arn:aws:states:::lambda:invoke
+                  OutputPath: "$.Payload"
+                  Parameters:
+                    Payload.$: "$"
+                    FunctionName: !Join [':', [!GetAtt ManifestLambda.Arn, '$LATEST']]
+                  Retry:
+                  - ErrorEquals:
+                    - Lambda.ServiceException
+                    - Lambda.AWSLambdaException
+                    - Lambda.SdkClientException
+                    - Lambda.TooManyRequestsException
+                    IntervalSeconds: 2
+                    MaxAttempts: 6
+                    BackoffRate: 2
+                  End: true
+            ItemReader:
+              Resource: arn:aws:states:::s3:listObjectsV2
+              Parameters:
+                Bucket: !Select [5, !Split [':', !GetAtt SourceS3Bucket.Arn]]
+                Prefix: inventory/data-gen-
+            MaxConcurrency: 1
+            Label: ManifestGenerationDMap
+            ItemBatcher:
+              MaxItemsPerBatch: 1000
+              BatchInput:
+                bucket: !Select [5, !Split [':', !GetAtt SourceS3Bucket.Arn]]
+            ResultWriter:
+              Resource: arn:aws:states:::s3:putObject
+              Parameters:
+                Bucket: !Select [5, !Split [':', !GetAtt DestinationS3Bucket.Arn]]
+                Prefix: !Join ['-', [!Ref Prefix, 'manifest', 'results']]
+            End: true
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref Prefix, 'datagen', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+
+  DataProcessorStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Join ['-', [!Ref Prefix, 'dataproc', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
+      Definition:
+        Comment: A description of my state machine
+        StartAt: Set Example Runtime Properties
+        States:
+          Set Example Runtime Properties:
+            Type: Pass
+            Next: S3 Inventory Partition Step
+            Result:
+              inventory:
+                bucket: !Ref SourceS3Bucket
+                key: inventory/manifest.json
+                output_prefix: inventory/temp/
+              workshop_variables:
+                output_bucket: !Ref DestinationS3Bucket
+                output_prefix: output-data
+                batch_output_files: 'yes'
+                input_sampling: 2
+                output_rows_per_file: !Ref BatchSize
+          S3 Inventory Partition Step:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: !Join [':', [!GetAtt InventoryPartitionLambda.Arn, '$LATEST']]
+              Payload.$: "$"
+            Retry:
+            - ErrorEquals:
+              - Lambda.ServiceException
+              - Lambda.AWSLambdaException
+              - Lambda.SdkClientException
+              - Lambda.TooManyRequestsException
+              IntervalSeconds: 2
+              MaxAttempts: 6
+              BackoffRate: 2
+            Next: Inline Map Orchestration
+            ResultPath: "$.stepresult"
+            ResultSelector:
+              body.$: "$.Payload.body"
+          Inline Map Orchestration:
+            Type: Map
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: INLINE
+              StartAt: Distributed Map Data Processing
+              States:
+                Distributed Map Data Processing:
+                  Type: Map
+                  ItemProcessor:
+                    ProcessorConfig:
+                      Mode: DISTRIBUTED
+                      ExecutionType: STANDARD
+                    StartAt: Lambda Invoke
+                    States:
+                      Lambda Invoke:
+                        Type: Task
+                        Resource: arn:aws:states:::lambda:invoke
+                        Parameters:
+                          FunctionName: !Join [':', [!GetAtt DataProcessLambda.Arn, '$LATEST']]
+                          Payload.$: $
+                        OutputPath: $.Payload
+                        End: true
+                        Retry:
+                        - ErrorEquals:
+                          - Lambda.TooManyRequestsException
+                          BackoffRate: 2
+                          IntervalSeconds: 30
+                          MaxAttempts: 3
+                          Comment: 'Lambda 429'
+                        - ErrorEquals:
+                          - SlowDown
+                          BackoffRate: 1
+                          IntervalSeconds: 30
+                          MaxAttempts: 5
+                          Comment: 'S3 SlowDown 503'
+                  ItemReader:
+                    Resource: arn:aws:states:::s3:getObject
+                    ReaderConfig:
+                      InputType: MANIFEST
+                      MaxItems: 0
+                    Parameters:
+                      Bucket.$: "$.key.bucket"
+                      Key.$: "$.key.key"
+                  MaxConcurrency: 1000
+                  Label: S3objectkeys
+                  ItemBatcher:
+                    BatchInput:
+                      workshop_variables.$: $.workshop_variables
+                    MaxItemsPerBatch: 100
+                  ResultWriter:
+                    Resource: arn:aws:states:::s3:putObject
+                    Parameters:
+                      Bucket: !Ref DestinationS3Bucket
+                      Prefix: !Sub "${Prefix}-dmap-results"
+                  End: true
+            End: true
+            ItemsPath: "$.stepresult.body.files"
+            MaxConcurrency: 2
+            ItemSelector:
+              workshop_variables.$: "$.workshop_variables"
+              key.$: "$$.Map.Item.Value"
+      Role: !GetAtt StepFunctionsRole.Arn
+      Tags:
+        Name: !Join ['-', [!Ref Prefix, 'dataproc', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
