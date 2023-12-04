@@ -5,25 +5,26 @@ Organizations across financial services and other industries have business proce
 ### Overview
 ![Overview](./.images/service-layout.png "Overview")
 
+This houses three distinct samples of the same Monte Carlo Simulation, varying by compute option. Each stack will create two Step Functions State Machines, one to generate the data to be processed, and one to process the data and run the simulation. Which stack you deploy will depend on your workload and use case.
+
+- Lambda - This stack will use Lambda functions to process the data synchronously using direct Step Functions integration with Lambda.
+- ECS + Fargate (Spot) - This stack will use an ECS Service with a Step Functions Activity to process the data asynchronously. Distributed Map will use the Step Functions Activity to distributed the data in sets that are then consumed by the ECS Service.
+- ECS + EC2 (Spot) - This stack will use an ECS Service with a Step Functions Activity to process the data asynchronously. Distributed Map will use the Step Functions Activity to distributed the data in sets that are then consumed by the ECS Service.
+
 ### Getting Started
 1. Clone the Repository
 
 #### CloudFormation
 2. Navigate to the CloudFormation [Console]('https://console.aws.amazon.com/cloudformation/home')
-3. Choose Create Stack, With new resources (standard)<br />
-![Create Stack](./.images/cf-step3.png "Create Stack")
+3. Choose Create Stack, With new resources (standard)
 4. In the Specify template section choose "Upload a template file"
-5. Choose "Choose file" and navigate the directory you cloned the repository to. Navigate into the cloudformation directory and the stack you want to deploy. Choose the main.yml<br />
-![Upload File](./.images/cf-step4.png "Upload File")
-6. Provide a stack name. ex: sfn-sample<br />
-![Stack Name](./.images/cf-step5.png "Stack Name")
-7. Leave defaults and choose Next<br />
-![Defaults](./.images/cf-step6.png "Defaults")
-8. Review the checkboxes at the bottom of the page. If you consent, check the boxes and choose Submit<br />
-![Submit](./.images/cf-step7.png "Submit")
+5. Choose "Choose file" and navigate the directory you cloned the repository to. Navigate into the cloudformation directory and the stack you want to deploy. Choose the main.yml
+6. Provide a stack name. ex: sfn-sample
+7. Leave defaults and choose Next
+8. Review the checkboxes at the bottom of the page. If you consent, check the boxes and choose Submit
 
 #### Terraform
-2. Navigate to the folder you closed the repository to
+2. Navigate to the folder you cloned the repository to
 3. Navigate into the terraform directory and the stack you wish to deploy
 4. Run "terraform init"
 5. Run "terraform plan -out plan"
