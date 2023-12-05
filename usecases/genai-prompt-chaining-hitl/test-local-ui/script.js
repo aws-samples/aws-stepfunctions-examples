@@ -31,17 +31,11 @@ function onReady() {
     $("#PublicButton").click(PublicButtonClicked);
     $("#NoButton").click(noButtonClicked);
     
-//    json = {"message": [{"prompt": "Human:You will create a title and description for the provided video transcript. Transcript:\nBeing misinformed or let's just say incompletely informed, you'd better start working on changing your business model. Absolutely. Um, so 70 31 1 thing that I, uh, within the aws we've always seen is that we flipped the 7030.  \n\n Your response should be formatted as a JSONObject as follows. {\"title\":\"title\", \"description\":\"description of the video\"} Do not add \"here is a generated ..\" Assistant:", "Bedrock": {"model": "anthropic.claude-v2", "model_response": " Here is a generated title and description for the video transcript:\n\n{\"title\":\"Changing Business Models in Response to Market Changes\", \"description\":\"A speaker advises that businesses should adapt their models in response to market changes, giving the example of AWS flipping the traditional 70/30 revenue split to 31/70 in some cases.\"}"}}, {"input": {"message": "where is america", "topic": "model-reponse"}, "TranscriptionJob": {"TranscriptionJobName": "ServerlessVideoGenerativeAI_8a8cf7ee-6658-444b-8e39-3b733ede6e27", "Transcript": {"TranscriptFileUri": "https://s3.us-east-1.amazonaws.com/all-misc-bucket/output/bezos_vogels.mp4.json"}, "TranscriptionJobStatus": "COMPLETED"}, "Payload": {"transcript": "Being misinformed or let's just say incompletely informed, you'd better start working on changing your business model. Absolutely. Um, so 70 31 1 thing that I, uh, within the aws we've always seen is that we flipped the 7030."}, "publicmodel": {"model_response": "{\n    \"title\": \"Transforming Your Business Model with AWS\",\n    \"description\": \"Discover how being misinformed or incompletely informed can drive you to change your business model. Explore the concept of flipping the 70-30 ratio within AWS to achieve better outcomes.\"\n}", "model": "gpt-3.5-turbo-0613"}}], "token": "AQCgAAAAKgAAAAMAAAAAAAAAAWUVChTR7Dkj8a4iLPJUQ2K3Id07LJLE0FZO6/MaoKgIvTPB8PbM0PKSj+R6pOjBks3kNaUWqF06mbS6vZdLhjXOgZtaaY7ZmF1Qiyu3OfZwCpiFsNXZEQePNSKdbF/LGFdxJpCNysowr8VpMP8P8H2JFolVKxKTQqqICSkkzzdgbQ03x8sPA4O1tJxuuAkfGu3hyp5mTYlHDp8gXR1w5sBQ7dZhWH8HYFlAum1G0dNhHYVGcnhSZUCBroyFIq8cbCfMfEqdp+SjM5GHpNz1aVw1QqvnPTjG/9k6WAtNu25lCi5ArOjHlv493EepPSXeK8GwlNRWPs4dnPsEZ7jN3AJoQrsOCxew/cgVLzeBhvYzpsVq7MAqKmPt+mKvoDL64nC9MPCG2LrgI2NV1t5xb2QAwIQlNXwbiftt3G8uCBfK7uCvML4fv/13TSqlgOuuFzeM8PLBzl2BGfLodYxeaXeDpWV7cP88pnz9qA9PsFc3sNijTuKDM4r/nv4SwJ5SOm8wah5dnCxZI15oGDUaxxt4Vh2N6T99Se+WADNklT6A4gj77z3UWgUl1z8ybFV/DK+iV22RVbBV0ax7svBfrL0YameEnrch0QYH7de2QN5oj2KZfo3xKlcbvVFhkp1UtBzJ7QXVeLGDTwRrKNGyZoGfPCmV3W0n"}
-//    onMessage(TOPIC_DATA, JSON.stringify(json))
-
     $("#connectButton").click();
 }
 
 function connectButtonClicked() {
     console.log('connectButtonClicked');
-    // const wssServerUrl = $("#wssServerUrl").val();
-    // const wssClientId = $("#wssClientId").val();
-    // const wssAuthorizerName = $("#wssAuthorizerName").val();
 
     const wssServerUrl = WSS_SERVER_URL;
     const wssClientId = WSS_CLIENT_ID;
