@@ -560,6 +560,128 @@ Resources:
 # LAMBDA FUNCTIONS
 #
 ##############################################################
+  FunctionECSRoleCreate:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      InlineCode: |
+        /* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+        * SPDX-License-Identifier: MIT-0 */
+
+        // A Lambda function that looks up the ECS Service linked role and creates it if it does not exist.
+        var response = require('./cfn-response.js');
+
+        function sleep(ms) {
+          return new Promise((resolve) => {
+            setTimeout(resolve, ms);
+          });
+        }
+
+        function send(event, context, responseStatus, responseData, physicalResourceId, noEcho) {
+            try {
+              const https = require("https");
+              const { URL } = require("url");
+
+              const responseBody = {
+                Status: responseStatus,
+                Reason: "See the details in CloudWatch Log Stream: " + context.logStreamName,
+                PhysicalResourceId: context.logStreamName,
+                StackId: event.StackId,
+                RequestId: event.RequestId,
+                LogicalResourceId: event.LogicalResourceId,
+                NoEcho: false,
+                Data: responseData,
+              };
+              console.log("Response body:\n", JSON.stringify(responseBody));
+
+              const parsedUrl = new URL(event.ResponseURL);
+              const requestOptions = {
+                hostname: parsedUrl.hostname,
+                port: 443,
+                path: parsedUrl.pathname + parsedUrl.search,
+                method: "PUT",
+                headers: {
+                  "content-type": "",
+                  "content-length": JSON.stringify(responseBody).length,
+                },
+              };
+              console.log("Request options:\n", JSON.stringify(requestOptions));
+
+              // Send response back to CloudFormation
+              return new Promise((resolve, reject) => {
+                const request = https.request(requestOptions, function (response) {
+                  console.log("Status code: ", response.statusCode);
+                  response.on("data", () => {});
+                  response.on("end", () => {
+                    console.log("Status code: ", response.statusCode);
+                    console.log("Status message: ", response.statusMessage);
+                    resolve("Success");
+                  });
+                });
+                request.on("error", (e) => {
+                  console.error(e);
+                  reject("Error");
+                });
+                request.write(JSON.stringify(responseBody));
+                request.end();
+              });
+            } catch (error) {
+              console.error("Error in cfn_response:\n", error);
+              return;
+            }
+          };
+
+        exports.handler = async function(event, context) {
+            const { IAMClient, CreateServiceLinkedRoleCommand, GetRoleCommand, NoSuchEntityException } = require("@aws-sdk/client-iam");
+            const iamClient = new IAMClient();
+            var responseStatus = response.SUCCESS
+            var responseData = {};
+            if (event.RequestType == "Delete") {
+                await send(event, context, responseStatus, responseData);
+                return;
+            };
+
+            var params = {
+              AWSServiceName: 'ecs.amazonaws.com', /* required */
+              Description: 'ECS Service Linked Role'
+            };
+            try {
+              const command = new CreateServiceLinkedRoleCommand(params);
+              responseData = await iamClient.send(command);
+            } catch (createError) {
+              // Just logging the error as it does not matter if the role already exists.
+              responseData = createError
+            }
+            await sleep(5000)
+            console.log(responseData);
+            await send(event, context, responseStatus, responseData);
+            return;
+        };
+      Runtime: nodejs18.x
+      MemorySize: 1024
+      Timeout: 300
+      Handler: index.handler
+      Policies:
+        - Statement:
+          - Sid: CreateECSServiceLinkedRole
+            Effect: Allow
+            Action: iam:CreateServiceLinkedRole
+            Resource: "arn:aws:iam::*:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS*"
+            Condition:
+              StringLike:
+                iam:AWSServiceName: ecs.amazonaws.com
+          - Sid: AttachECSServiceLinkPolicy
+            Effect: Allow
+            Action:
+              - iam:PassRole
+              - iam:PutRolePolicy
+              - iam:GetRole
+            Resource: "arn:aws:iam::*:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS*"
+
+  CustomResourceECSRoleCreate:
+    Type: 'Custom::ECSRoleCreate'
+    Properties:
+      ServiceToken: !GetAtt FunctionECSRoleCreate.Arn
+
   SeedFileGenerationLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -1164,6 +1286,9 @@ Resources:
 ##############################################################
   MainECSCluster:
     Type: AWS::ECS::Cluster
+    DependsOn:
+      - ECSExecPolicy
+      - CustomResourceECSRoleCreate
     Properties:
       ClusterName: !Join ['-', [!Ref Prefix, 'ecs-cluster', !Select [7, !Split ['-', !Ref AWS::StackId]]]]
       ClusterSettings:
