@@ -1,18 +1,29 @@
 
 ## Prompt chaining with human in the loop
-This is a SAMPLE application to demonstrate prompt chaining with human in the loop. prompt chaining is a technique of wiring multiple prompts and prompts responses in a sequence to acheive a business operation. 
-The sample application will do the following
-1. It creates title and description using Amazon Bedrock foundation model and OpenAI model for a video
-2. It sends the generated titles and descriptions to client using IoT Core Websocket
-3. When the user chooses one of the titles and descriptions, It generates the avatar and sends the avatar to the user.
+This is a SAMPLE application to demonstrate prompt chaining with human in the loop. Prompt chaining is a technique of decomposing complex prompts to simpler prompts and wiring multiple simpler prompts and prompt responses as a sequence of stepts to acheive a business operation. 
 
-### Architecture
+### Solution overview
+Conside a video streaming application such as [ServerlessVideo](https://serverlessland.com/explore/serverlessvideo). The sample application allows video authors to create title, description and custom avatar for the video using Generative AI foundation models. Steps involved are. 
+1. Transcribes provided video to text.
+1. Creates title and description using two foundations models - Amazon Bedrock foundation model and OpenAI model..
+1. Sends the generated title and description to the video author to choose one and waits for the video author to respond
+1. As the video author responds with the selected title, it uses the title to generate avatar.
+1. Generates a custom avatar based on the chosen title, and sends to the vide author asGenerated avatar as pre-signed url.
+
+Solution decomposes generation and selection of title, description and avatar to simpler prompts by first generating the title and description and then using the chosen title to generate avatar. This showcases how prompt chaining can be used with Step Functions.
+
+### Design & Architecture
 
 ![image](./arch.png)
 
+Sample application uses Step Functions direct integration with Amazon Transcribe, Amazon S3, Amazon Bedrock and HTTP API to achieve the functionality. It exposes two APIs through Amazon API Gateway - one for invoking the Step Functions to create the title, description and avatar and another to send the chosen title.
+It uses Step Functions [callback token](https://docs.aws.amazon.com/step-functions/latest/dg/callback-task-sample-sqs.html) to wait for the user response.
+
+### Demo
+![sample](./demo.gif)
 ### Getting Started
 
-1. One leg of the workflow uses OpenAI model to create title and description. If you have not done, [create an account and get the api key](https://platform.openai.com/docs/quickstart?context=python)
+1. One leg of the workflow uses OpenAI model to create title and description. If you do not have an OpenAI account, [create an account and get the api key](https://platform.openai.com/docs/quickstart?context=python)
 
 1. Make sure your account is [enabled to access](https://console.aws.amazon.com/bedrock/home?#/modelaccess) Amazon Bedrock models anthropic-claude-v2 and SDXL 0.8 
 
