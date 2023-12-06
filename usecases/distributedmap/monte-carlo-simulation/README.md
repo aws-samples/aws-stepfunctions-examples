@@ -11,13 +11,13 @@ For this fictitious use case we will be working with a portfolio of personal and
 
 Loan defaults occur when the borrower fails to repay the loan. Predicting which loans in a portfolio would default in various scenarios helps companies understand their risk and plan for future events.
 
+### Getting Started
 This repository houses three distinct samples of the same Monte Carlo Simulation, varying by compute option. Each stack will create two Step Functions State Machines, one to generate the data to be processed, and one to process the data and run the simulation. Which stack you deploy will depend on your workload and use case.
 
 - Lambda - This stack will use Lambda functions to process the data synchronously using direct Step Functions integration with Lambda.
 - ECS + Fargate (Spot) - This stack will use an ECS Service with a Step Functions Activity to process the data asynchronously. Distributed Map will use the Step Functions Activity to distributed the data in sets that are then consumed by the ECS Service.
 - ECS + EC2 (Spot) - This stack will use an ECS Service with a Step Functions Activity to process the data asynchronously. Distributed Map will use the Step Functions Activity to distributed the data in sets that are then consumed by the ECS Service.
 
-### Getting Started
 1. Clone the Repository
 
 #### CloudFormation
