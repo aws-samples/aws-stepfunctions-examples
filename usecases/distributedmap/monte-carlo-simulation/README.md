@@ -12,11 +12,17 @@ For this fictitious use case we will be working with a portfolio of personal and
 Loan defaults occur when the borrower fails to repay the loan. Predicting which loans in a portfolio would default in various scenarios helps companies understand their risk and plan for future events.
 
 ### Getting Started
-This repository houses three distinct samples of the same Monte Carlo Simulation, varying by compute option. Each stack will create two Step Functions State Machines, one to generate the data to be processed, and one to process the data and run the simulation. Which stack you deploy will depend on your workload and use case.
+This repository houses three distinct samples of the same Monte Carlo Simulation, varying by compute option. When you navigate to either cloudformation or terraform folder, you find the Infrastructure as Code(IaC) templates for each sample. Folder names indicate the compute option.
 
-- Lambda - This stack will use Lambda functions to process the data synchronously using direct Step Functions integration with Lambda.
-- ECS + Fargate (Spot) - This stack will use an ECS Service with a Step Functions Activity to process the data asynchronously. Distributed Map will use the Step Functions Activity to distributed the data in sets that are then consumed by the ECS Service.
-- ECS + EC2 (Spot) - This stack will use an ECS Service with a Step Functions Activity to process the data asynchronously. Distributed Map will use the Step Functions Activity to distributed the data in sets that are then consumed by the ECS Service.
+- Lambda - This directory contains IaC to deploy the necessary resources to run Monte Carlo simulation with AWS Lambda as compute option. The algorithm is run in AWS Lambda. [Step Functions distributed map](https://docs.aws.amazon.com/step-functions/latest/dg/use-dist-map-orchestrate-large-scale-parallel-workloads.html) manages the parallel runs of Lambda for each loan data file in Amazon S3.
+
+- ECS + Fargate (Spot) - This directory contains IaC to deploy the necessary resources to run Monte Carlo simulation with Amazon ECS powered by AWS Fargate with Spot instances as compute option. The algorithm is run in Amazon ECS tasks. Step Functions distributed map uses [Step Functions activity](https://docs.aws.amazon.com/step-functions/latest/dg/concepts-activities.html) to manage the parallel runs of simulation for each loan data file in Amazon S3. To learn more about the solution architecture and design choice, check out the [blog]()
+
+- ECS + EC2 (Spot) - This directory contains IaC to deploy the the necessary resources to run Monte Carlo simulation with Amazon ECS with EC2 Spot instances as compute option. The algorithm is run in Amazon ECS tasks. Step Functions distributed map uses [Step Functions activity](https://docs.aws.amazon.com/step-functions/latest/dg/concepts-activities.html) to manage the parallel runs of simulation for each loan data file in Amazon S3.
+
+Each stack will create two Step Functions State Machines, one to generate the data to be processed, and one to process the data and run the simulation. Which stack you deploy will depend on your workload and use case.
+
+---
 
 1. Clone the Repository
 
