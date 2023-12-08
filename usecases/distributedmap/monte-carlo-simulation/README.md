@@ -41,3 +41,6 @@ Each stack will create two Step Functions State Machines, one to generate the da
 4. Run "terraform init"
 5. Run "terraform plan -out plan"
 6. Run "terraform apply plan"
+
+#### Running the Stack
+The Stacks will create 2 Step Functions State Machines. You will first run the *-datagen-* workflow to generate the source data for processing. Next you will run the *-dataproc-* workflow to actually process the data.
