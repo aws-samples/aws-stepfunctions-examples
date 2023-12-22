@@ -1,0 +1,719 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "Creates a data pipeline performing quality check using deequ" 
+Metadata:
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Inputs from deequ image builder"
+        Parameters: 
+          - ImageUri
+          - ScriptBucket
+      - 
+        Label: 
+          default: "Default Parameters"
+        Parameters: 
+          - InputPath
+          - SparkScript
+          - LambdaFunctionPrefix
+          - LambdaTimeout
+          - LambdaMemory
+          - StringLength
+          - SampleProjectDatabase
+          - SampleProjectTable
+          - SampleProjectBucket
+          - MyCrawlerName
+          - SampleProjectWorkGroup
+          - SampleStateMachineName
+          - SparkLambdapermissionPolicyArn
+          - AttachToVpc
+          - SecurityGroupIds
+          - SubnetIds
+          - Command
+          - EntryPoint
+          - WorkingDirectory
+Parameters:
+  ImageUri:
+    Description: 'Mandatory: ECR Uri for the image for deequ on Lambda' 
+    Type: String
+  ScriptBucket:
+    Type: String
+    Description: 'Mandatory: Amazon S3 bucket name where the spark script is stored. Just provide the bucket name e.g. bucket1'
+  InputPath: 
+    Description: 'Mandatory: Sample input file to deequ'
+    Type: String
+    Default: s3a://redshift-downloads/spatial-data/accommodations.csv
+  SparkScript:
+    Type: String
+    Description: 'Mandatory: Amazon S3 key where the spark script resides. Start without
+      the /.eg: script/location/name.py'
+    Default: sample-accommodations-to-deequ.py
+  LambdaFunctionPrefix:
+    Description: 'Optional: This is the prefix for the name of the deequ lambda function. This name must satisfy the pattern ^[a-z0-9-_]{1,64}$'
+    Type: String
+    Default: DeequOnAWSLambda
+  LambdaTimeout:
+    Description: 'Optional: Maximum Lambda invocation runtime in seconds. (min 1 -
+      900 max)'
+    Default: 180
+    Type: Number
+  LambdaMemory:
+    Description: 'Optional: Lambda memory in MB (min 128 - 3008 max).'
+    Default: 3008
+    Type: Number
+  StringLength:
+    Type: String
+    Default: 10
+  SampleProjectDatabase:
+    Type: String
+    Default: dataquality-pipeline-db-
+  SampleProjectTable:
+    Type: String
+    Default: dataquality-pipeline-tbl-
+  SampleProjectBucket:
+    Type: String
+    Default: dataquality-pipeline-bucket-
+  MyCrawlerName:
+    Type: String
+    Default: dataquality-pipeline-crawler-
+  SampleProjectWorkGroup:
+    Type: String
+    Default: dataquality-pipeline-workgroup-
+  SampleStateMachineName:
+    Type: String
+    Default: dataquality-statemachine-
+  SparkLambdapermissionPolicyArn:
+    Description: 'Optional: Arn of the policy that contains the permissions your spark
+      job will need to run successfully'
+    Type: String
+    Default: ''
+  AttachToVpc:
+    Type: String
+    Description: 'Mandatory: Set True or False to imply VPC Connectivity'
+    Default: false
+    AllowedValues:
+    - true
+    - false
+  SecurityGroupIds:
+    Description: 'Optional: One or more SecurityGroup IDs corresponding to the SecurityGroup
+      that should be applied to the Lambda function. (e.g. sg1,sg2,sg3).Only used
+      if AttachToVpc is True'
+    Type: CommaDelimitedList
+    Default: ''
+  SubnetIds:
+    Description: 'Optional: One or more Subnet IDs corresponding to the Subnet that
+      the Lambda function can use to access you data source. (e.g. subnet1,subnet2).Only
+      used if AttachToVpc is True'
+    Type: CommaDelimitedList
+    Default: ''
+  Command:
+    Description: 'Optional: Command override for the image. This is not required'
+    Type: CommaDelimitedList
+    Default: /var/task/sparkLambdaHandler.lambda_handler
+  EntryPoint:
+    Description: 'Optional: Entry Point override for the image'
+    Type: CommaDelimitedList
+    Default: ''
+  WorkingDirectory:
+    Description: 'Optional: Command override for the image'
+    Type: String
+    Default: ''
+Conditions:
+  NeedsVPC:
+    Fn::Equals:
+    - Ref: AttachToVpc
+    - 'True'
+  HasAdditionalPolicy:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: SparkLambdapermissionPolicyArn
+  NeedsImageBuild:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: ImageUri
+      - ''
+  HasEntryPoint:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Fn::Join:
+        - ','
+        - Ref: EntryPoint
+  HasWorkingDirectory:
+    Fn::Not:
+    - Fn::Equals:
+      - ''
+      - Ref: WorkingDirectory
+
+Resources:
+  ###
+  # Resources for creating Lambda running deequ
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Role used by the lambda running spark
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - Fn::If:
+        - HasAdditionalPolicy
+        - Ref: SparkLambdapermissionPolicyArn
+        - Ref: AWS::NoValue
+      - Fn::If:
+        - NeedsVPC
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - Ref: AWS::NoValue
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action: sts:AssumeRole
+    Metadata:
+      SamResourceId: LambdaRole
+  LambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName:
+        Fn::Sub: SparkOnLmandaDefaulPolicy-${AWS::StackName}
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Action:
+          - ecr:GetAuthorizationToken
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - ecr:BatchCheckLayerAvailability
+          - ecr:GetDownloadUrlForLayer
+          - ecr:BatchGetImage
+          Resource:
+            Fn::Sub:
+            - arn:aws:ecr:${Region}:${Account}:repository/${RepositoryName}
+            - Region:
+                Fn::Select:
+                - 3
+                - Fn::Split:
+                  - .
+                  - Ref: ImageUri
+              Account:
+                Fn::Select:
+                - 0
+                - Fn::Split:
+                  - .
+                  - Ref: ImageUri
+              RepositoryName:
+                Fn::Select:
+                - 1
+                - Fn::Split:
+                  - /
+                  - Fn::Select:
+                    - 0
+                    - Fn::Split:
+                      - ':'
+                      - Fn::Select:
+                        - 5
+                        - Fn::Split:
+                          - .
+                          - Ref: ImageUri
+        - Effect: Allow
+          Action:
+          - s3:ListBucket
+          Resource:
+            Fn::Sub: arn:aws:s3:::*
+        - Effect: Allow
+          Action:
+          - s3:Get*
+          Resource:
+            Fn::Sub: arn:aws:s3:::*
+        - Effect: Allow
+          Action:
+          - s3:Put*
+          Resource:
+            Fn::Sub: arn:aws:s3:::${ScriptBucket}/*
+        - Effect: Allow
+          Action:
+          - s3:Delete*
+          Resource:
+            Fn::Sub: arn:aws:s3:::${ScriptBucket}/*
+      Roles:
+      - Ref: LambdaRole
+    Metadata:
+      SamResourceId: LambdaPolicy
+  SparkLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      PackageType: Image
+      FunctionName:
+        Fn::Sub: ${LambdaFunctionPrefix}-${AWS::StackName}
+      Code:
+        ImageUri:
+          Ref: ImageUri
+      ImageConfig:
+        Command:
+          Ref: Command
+        EntryPoint:
+          Fn::If:
+          - HasEntryPoint
+          - Ref: EntryPoint
+          - Ref: AWS::NoValue
+        WorkingDirectory:
+          Fn::If:
+          - HasWorkingDirectory
+          - Ref: WorkingDirectory
+          - Ref: AWS::NoValue
+      Description: Lambda to run spark containers
+      Timeout:
+        Ref: LambdaTimeout
+      MemorySize:
+        Ref: LambdaMemory
+      Role:
+        Fn::GetAtt:
+        - LambdaRole
+        - Arn
+      VpcConfig:
+        Fn::If:
+        - NeedsVPC
+        - SecurityGroupIds:
+            Ref: SecurityGroupIds
+          SubnetIds:
+            Ref: SubnetIds
+        - Ref: AWS::NoValue
+      Environment:
+        Variables:
+          SCRIPT_BUCKET:
+            Ref: ScriptBucket
+          SPARK_SCRIPT:
+            Ref: SparkScript
+          input_path:
+            Ref: InputPath
+          output_path: !Join [ '/', [ 's3a:/', !Ref ScriptBucket, 'OUTPUT/' ] ]
+    Metadata:
+      SamResourceId: SparkLambda
+  ###
+  # Resources for creatin the data pipeline
+  # Create a Lambda function that generate a random string
+  LambdaForStringGeneration:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Handler: "index.lambda_handler"
+      Role: !GetAtt [ LambdaGenerateStringRole, Arn ]
+      Code:
+        ZipFile:
+          !Sub
+          - |-
+            import random
+            import string
+            import http.client
+            from urllib.parse import urlparse
+            import json
+            import uuid
+
+            def send_response(request, response, status=None, reason=None):
+                if status is not None:
+                    response['Status'] = status
+
+                if reason is not None:
+                    response['Reason'] = reason
+
+                if 'ResponseURL' in request and request['ResponseURL']:
+                    print(request['ResponseURL'])
+                    url = urlparse(request['ResponseURL'])
+                    body = json.dumps(response)
+                    https = http.client.HTTPSConnection(url.hostname)
+                    https.request('PUT', url.path+'?'+url.query, body)
+
+                return response
+
+            def lambda_handler(event, context):
+                response = {
+                    'StackId': event['StackId'],
+                    'RequestId': event['RequestId'],
+                    'LogicalResourceId': event['LogicalResourceId'],
+                    'Status': 'SUCCESS'
+                }
+
+                if 'PhysicalResourceId' in event:
+                    response['PhysicalResourceId'] = event['PhysicalResourceId']
+                else:
+                    response['PhysicalResourceId'] = str(uuid.uuid4())
+
+                if event['RequestType'] == 'Delete':
+                    return send_response(event, response)
+
+                random_string = ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(${stringLength}))
+
+                response['Data'] = {'RandomString': random_string}
+                response['Reason'] = 'Successful'
+                return send_response(event, response)
+          - { stringLength: !Ref StringLength}
+
+      Runtime: "python3.9"
+      Timeout: "600"
+  LambdaGenerateStringRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+  ###
+  # Generate a random string
+  StringGenerationLambda:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt [ LambdaForStringGeneration, Arn ]
+  ###
+  # Create an AWS Glue database
+  GlueDatabase:
+    DependsOn: LambdaForStringGeneration
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name:
+          Fn::Join:
+            - ''
+            - - !Ref SampleProjectDatabase
+              - !GetAtt [ StringGenerationLambda, RandomString ]
+  ###
+  # Create an AWS Athena workGroup
+  AthenaWorkGroup:
+    DependsOn: LambdaForStringGeneration
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Join [ "", [!Ref SampleProjectWorkGroup, !GetAtt [ StringGenerationLambda, RandomString ] ] ]
+      State: ENABLED
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: false
+        PublishCloudWatchMetricsEnabled: false
+        RequesterPaysEnabled: true
+        ResultConfiguration:
+          OutputLocation: !Join [ "", ["s3://", !Ref ScriptBucket, "/result" ] ]
+  ###
+  # Create an AWS Glue crawler
+  GlueCrawler:
+    DependsOn: GlueDatabase
+    Type: AWS::Glue::Crawler
+    Properties:
+      DatabaseName:
+        Fn::Join:
+          - ''
+          - - !Ref SampleProjectDatabase
+            - !GetAtt [ StringGenerationLambda, RandomString ]
+      Name:
+        Fn::Join:
+          - ''
+          - - !Ref MyCrawlerName
+            - !GetAtt [ StringGenerationLambda, RandomString ]
+      Role: !GetAtt [ GlueCrawlerExecutionRole, Arn ]
+      SchemaChangePolicy:
+        UpdateBehavior: "UPDATE_IN_DATABASE"
+        DeleteBehavior: "LOG"
+      Targets:
+        S3Targets:
+          - Path: !Join [ "", [ !Ref ScriptBucket, "/OUTPUT" ] ]
+  GlueCrawlerExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: GlueCrawlerExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:*
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:GetBucketAcl
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:*:*:/aws-glue/*"
+  ###
+  # Creates a lambda function that invokes crawler
+  LambdaForInvokingCrawler:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Handler: "index.lambda_handler"
+      Role: !GetAtt [ LambaForCrawlerInvocationExecutionRole, Arn ]
+      Code:
+        ZipFile:
+          !Sub
+          - |-
+            import json
+            import boto3
+            import time
+
+            MAX_RETRY = 20
+            def lambda_handler(event, context):
+              client = boto3.client('glue')
+              response = client.start_crawler(
+                  Name='${crawler}'
+              )
+              retry_count = 1
+              while retry_count < MAX_RETRY:
+                  time.sleep(30)
+                  crawler_status = client.get_crawler(
+                      Name='${crawler}'
+                  )
+                  crawler_run_status = crawler_status['Crawler']['State']
+                  if crawler_run_status == 'READY':
+                      break
+                  retry_count += 1
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Crawler completes')
+              }
+          - { crawler: !Join [ "", [ !Ref MyCrawlerName, !GetAtt [ StringGenerationLambda, RandomString ] ] ]}
+
+      Runtime: "python3.9"
+      Timeout: "600"
+  LambaForCrawlerInvocationExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: LambaForCrawlerInvocationExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - glue:StartCrawler
+                  - glue:GetCrawler
+                Resource: "*"
+  ###
+  # Create a SNS topic
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      KmsMasterKeyId: !Ref SNSKeyAlias
+
+  SNSKey:
+    DeletionPolicy : Retain
+    Type: AWS::KMS::Key
+    Properties: 
+      Enabled: true
+      KeyPolicy: {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "Allow access through SNS for all principals in the account that are authorized to use SNS",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": "*"
+                },
+                "Action": [
+                    "kms:Encrypt",
+                    "kms:Decrypt",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKey*",
+                    "kms:CreateGrant",
+                    "kms:DescribeKey"
+                ],
+                "Resource": "*",
+                "Condition": {
+                    "StringEquals": {
+                        "kms:ViaService":  { "Fn::Join": [".",["sns","Ref" : "AWS::Region","amazonaws.com"]]},
+                        "kms:CallerAccount": { "Ref" : "AWS::AccountId" }
+                    }
+                }
+            },
+            {
+                "Sid": "Allow direct access to key metadata to the account",
+                "Effect": "Allow",
+                "Principal": {
+                    "AWS": {"Fn::Join": [":",["arn:aws:iam:","Ref" : "AWS::AccountId","root"]]}
+                },
+                "Action": [
+                    "kms:*"                  
+                ],
+                "Resource": "*"
+            }
+        ]
+    }
+
+  SNSKeyAlias:
+    DependsOn: 
+      - SNSKey
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Join ["", ['alias/Stack-',!Ref AWS::StackName,'/sns-key']]
+      TargetKeyId: 
+        Ref: SNSKey
+  ###
+  # Create a Step Functions state machine
+  AthenaStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: 
+        Fn::Join:
+          - ''
+          - - !Ref SampleStateMachineName
+            - !GetAtt [ StringGenerationLambda, RandomString ]
+      RoleArn: !GetAtt [ AthenaWorkflowExecutionRole, Arn ]
+      DefinitionString:
+        !Sub
+        - |-
+          {
+            "StartAt": "Run data quality using deequ",
+            "States": {
+              "Run data quality using deequ": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "Parameters":{
+                  "FunctionName":"${deequLambda}",
+                  "Payload":{
+                    "INPUT_PATH":"${input_path}",
+                    "OUTPUT_PATH":"${output_path}"
+                  }
+                },
+                "Next": "Run Glue crawler"
+              },
+              "Run Glue crawler": {
+                "Resource": "${crawlerLambda}",
+                "Type": "Task",
+                "Next": "Start an Athena query"
+              },
+              "Start an Athena query": {
+                "Resource": "arn:${AWS::Partition}:states:::athena:startQueryExecution.sync",
+                "Parameters": {
+                  "QueryString": "SELECT * FROM \"${database}\".\"verification_results_metrics\" limit 50",
+                  "WorkGroup": "${workgroup}"
+                },
+                "Type": "Task",
+                "Next": "Get query results"
+              },
+              "Get query results": {
+                "Resource": "arn:${AWS::Partition}:states:::athena:getQueryResults",
+                "Parameters": {
+                  "QueryExecutionId.$": "$.QueryExecution.QueryExecutionId"
+                },
+                "Type": "Task",
+                "Next": "Send query results"
+              },
+              "Send query results": {
+                "Resource": "arn:${AWS::Partition}:states:::sns:publish",
+                "Parameters": {
+                  "TopicArn": "${snsTopicArn}",
+                  "Message": {
+                    "Input.$": "$.ResultSet.Rows"
+                  }
+                },
+                "Type": "Task",
+                "End": true
+              }
+            }
+          }
+        - {snsTopicArn: !Ref SNSTopic, database: !Ref GlueDatabase, deequLambda: !Ref SparkLambda, crawlerLambda: !GetAtt [ LambdaForInvokingCrawler, Arn ], workgroup: !Ref AthenaWorkGroup, input_path: !Ref InputPath, output_path: !Join [ '/', [ 's3a:/', !Ref ScriptBucket, 'OUTPUT/' ] ]}
+  AthenaWorkflowExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: AthenaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt [ SparkLambda, Arn ]
+                  - !GetAtt [ LambdaForInvokingCrawler, Arn ]
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref SNSTopic
+              - Effect: Allow
+                Action:
+                  - athena:getQueryResults
+                  - athena:startQueryExecution
+                  - athena:stopQueryExecution
+                  - athena:getQueryExecution
+                  - athena:getDataCatalog
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkGroup}"
+                  - !Sub "arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:datacatalog/*"
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:ListMultipartUploadParts
+                  - s3:AbortMultipartUpload
+                  - s3:CreateBucket
+                  - s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::*"
+              - Effect: Allow
+                Action:
+                  - glue:CreateDatabase
+                  - glue:GetDatabase
+                  - glue:GetDatabases
+                  - glue:UpdateDatabase
+                  - glue:DeleteDatabase
+                  - glue:CreateTable
+                  - glue:UpdateTable
+                  - glue:GetTable
+                  - glue:GetTables
+                  - glue:DeleteTable
+                  - glue:BatchDeleteTable
+                  - glue:BatchCreatePartition
+                  - glue:CreatePartition
+                  - glue:UpdatePartition
+                  - glue:GetPartition
+                  - glue:GetPartitions
+                  - glue:BatchGetPartition
+                  - glue:DeletePartition
+                  - glue:BatchDeletePartition
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/*"
+                  - !Sub "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/*"
+                  - !Sub "arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+Outputs:
+  StateMachineArn:
+    Value: !Ref AthenaStateMachine
+  ExecutionInput:
+    Description: Sample input to StartExecution.
+    Value:
+      >
+      {}
