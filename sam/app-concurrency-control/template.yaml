@@ -1,0 +1,193 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Sfn-test-runner: An example app that demonstrates how to provide rate limiting/concurrency control for step function"
+
+Globals:
+  Function:
+    Timeout: 900
+    Tags:
+      auto-delete: "no"
+Parameters:
+  ParameterInstancePrefix:
+    Type: String
+    Default: "CC"
+    Description: "Prefix to be used in names of the things created by this stack."
+
+Resources:
+############### Test Infrastructure ###############################################
+  # Define a common IAM role to be used for all components of this app
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+                - "lambda.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - events:PutTargets
+                - events:PutRule
+                - events:DescribeRule
+                - states:StartExecution
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - cloudwatch:PutMetricData
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - lambda:InvokeFunction
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - states:ListExecutions
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - sqs:*
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - ssm:Get*
+                - ssm:Describe*
+                - ssm:List*
+                Resource: '*'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # Main statemachine that runs the tests  
+  StateMachineSempaphore:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachines/do-some-work.asl.json
+      DefinitionSubstitutions:
+        LambdaDoWorkFunction: !GetAtt LambdaDoWorkFunction.Arn
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+      Type: "STANDARD"
+      Name: !Join ["",[!Ref ParameterInstancePrefix,'-',"WorkStateMachine"]]     
+      Tags: 
+        -key: "auto-delete"
+        -value: "no"         
+
+  # Lambda function that builds up a list of things to run
+  LambdaDoWorkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/do_work_function/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Timeout: 60
+      Role: !GetAtt ApplicationRole.Arn
+      Tags: 
+        -key: "auto-delete"
+        -value: "no"
+
+  LogGroupStateMachines:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join [ "", ["/aws/states/",!Ref ParameterInstancePrefix,"-StateMachineLogs"]]
+  # Lambda function that checks if current execution count is under threshold
+  LambdaConcurrencyController:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/concurrency_controller/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Timeout: 900
+      Role: !GetAtt ApplicationRole.Arn
+      Events:
+        TestQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TestQueue.Arn
+            BatchSize: 1
+            Enabled: true
+            ScalingConfig:
+              MaximumConcurrency: 4
+      Tags: 
+        -key: "auto-delete"
+        -value: "no"
+  TestRunner:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/test_runner/
+      Handler: app.lambda_handler
+      Runtime: python3.8
+      Timeout: 900
+      Role: !GetAtt ApplicationRole.Arn
+      Tags: 
+        -key: "auto-delete"
+        -value: "no"
+  # SSM param for concurrency threshold
+  SSMParamConcurrencyLimit:
+    Type: AWS::SSM::Parameter
+    Properties: 
+      Type: String
+      Description: "Step Function Concurrency Limit"
+      Name: "concurrencyLimit"
+      Value: "10"
+      Tags: 
+        -key: "auto-delete"
+        -value: "no"
+  # test queue
+  TestQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900
+      QueueName: CC-Test-Queue
+      RedrivePolicy: 
+        deadLetterTargetArn: !GetAtt CCDeadLetterQueue.Arn
+        maxReceiveCount: 10
+  # DLQ
+  CCDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 900
+      QueueName: CC-DLQ
+ 
+Outputs:
+  StateMachineLogGroup:
+    Description: "Log group for statemachine logs"
+    Value: !GetAtt  LogGroupStateMachines.Arn
+  StateMachineMain:
+    Description: "Main statemachine that is the entry point for this application"
+    Value: !Ref StateMachineSempaphore
+
+
+
