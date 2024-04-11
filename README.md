@@ -26,6 +26,11 @@ In this example, you use AWS Step Functions to orchestrate restoration of S3 obj
 
 Blog Post: [Orchestrating S3 Glacier Deep Archive object retrieval using Step Functions](Blog Link Here)
 
+### Video Segment Detection and Edition with using AWS Step Functions
+This workflow is meant to show you how to leverage AWS Step Functions for performing typical video edition tasks. Specifically, the example uses a video that has [SMPTE color bars](https://en.wikipedia.org/wiki/SMPTE_color_bars) of random duration at the beginning. The workflow will get a demo video from S3, put it through Amazon Rekognition for detecting segments, and then Amazon MediaConvert removes the initial video segment (SMPTE color bars). You can find details in the example's [README](./sam/app-video-segment-detection-and-edition/README.md) file.
+
+Blog Post: [Low code workflows with AWS Elemental MediaConvert](https://aws.amazon.com/blogs/media/low-code-workflows-with-aws-elemental-mediaconvert/)
+
 ## Demos of Step Functions capabilities
 
 ### Demo Step Functions Local testing with Mock service integrations using Java testing frameworks (JUnit and Spock)
