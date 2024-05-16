@@ -1,0 +1,8 @@
+{
+  "bucket_name": "deequ-image-builder-myscriptbucket-mwwfhk8ylsiv",
+  "good_file_key": "OUTPUT/GOOD_FILES/accommodations.csv",
+  "bad_file_key": "OUTPUT/BAD_FILES/accommodations.csv",
+  "verification_results": "OUTPUT/verification_results",
+  "verification_results_metrics": "OUTPUT/verification_results_metrics",
+  "deequ_check_pass": "Pass"
+}
