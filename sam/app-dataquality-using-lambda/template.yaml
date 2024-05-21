@@ -41,6 +41,7 @@ Resources:
         MyScriptBucketName: !Ref MyScriptBucket
         MySparkScript: !Ref SparkScript
         CopyInputFileFunctionArn: !GetAtt CopyInputFileFunction.Arn
+        DataQualityUsingLambdaTopicArn: !Ref DataQualityUsingLambdaTopic
       Policies: 
         - LambdaInvokePolicy:
             FunctionName: !Ref DeequOnLambdaFunction

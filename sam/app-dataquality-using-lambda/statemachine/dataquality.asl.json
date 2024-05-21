@@ -127,7 +127,7 @@
       "Resource": "arn:aws:states:::sns:publish",
       "Parameters": {
         "Message.$": "States.Format('Data Quality results failed. Here are the contraints that failed {}. For details, please see the OUTPUT folder of the S3 bucket {}.',$..constraint,$.Name)",
-        "TopicArn": "arn:aws:sns:us-east-1:494372007658:dataquality-using-lambda-topic-deequ-using-lambda-ver1"
+        "TopicArn": "${DataQualityUsingLambdaTopicArn}"
       },
       "Next": "FailState",
       "ResultPath": null

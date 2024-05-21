@@ -14,9 +14,10 @@ The application uses several AWS resources, including AWS Lambda functions, AWS 
 
 ## Deploy the sample application
 1. Clone the github repository.
+1. This sample application has been tested in us-east-1 region.
 1. Create a ECR image for running Spark on AWS Lambda (SoAL Framework) - 
     1. Navigate to the CloudFormation service on your AWS Console. Create a stack with new resources. Upload cfn-imagebuilder.yaml file from cloudformation folder in the cloned repository. Provide a stack name. ex: deequ-image-builder. Leave rest as defaults on all pages until you reach the Submit page. Review the checkboxes and click on *Submit*.
-    1. Once the cloudformation stack is completed, navigate to CodeBuild service on AWS Console. Make sure that CodeBuild has successfully built the ECR image. If it failed due to toomanyrequests while pulling base image from dockerhub, you can *Retry build* button on CodeBuild console.
+    1. Once the cloudformation stack is completed, navigate to CodeBuild service on AWS Console. Make sure that CodeBuild has successfully built the ECR image. If it failed due to toomanyrequests while pulling base image from dockerhub, you can push *Retry build* button on CodeBuild console.
     1. Navigate to CloudFormation service and open the stack you just created. Go to the *Outputs* tab and copy the *ImageUri* and save it somewhere. It will be needed in further steps.
 2. Use sam cli to build and deploy the data quality pipeline to your AWS Account
 
@@ -30,7 +31,7 @@ The application uses several AWS resources, including AWS Lambda functions, AWS 
     You may need the following for local testing.
     * [Python 3 installed](https://www.python.org/downloads/)
 
-3. To build and deploy your application for the first time, run the following in your shell:
+3. To build and deploy your application for the first time, run the following in your shell from the root of your cloned project app-dataquality-using-lambda:
 
     ```bash
     sam build

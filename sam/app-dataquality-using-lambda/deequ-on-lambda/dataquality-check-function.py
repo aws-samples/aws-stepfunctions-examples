@@ -82,7 +82,7 @@ if __name__ == "__main__":
 
     print("Schema of input file:")
     dataset.printSchema()
-
+    
     analysisResult = AnalysisRunner(spark) \
                     .onData(dataset) \
                     .addAnalyzer(Size()) \
