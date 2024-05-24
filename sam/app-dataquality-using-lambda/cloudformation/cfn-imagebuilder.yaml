@@ -1,0 +1,285 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Build a docker image for running deequ on AWS Lambda"
+Parameters:
+  ImageRepoPrefix:
+    Type: String
+    Default: deequ-on-lambda
+    Description: Prefix of the Image Repository to be created
+  Framework:
+    Type: String
+    Default: DEEQU
+    Description: Framework jars to download
+    AllowedValues:
+      - DEEQU
+Outputs:
+  ImageRepoName:
+    Description: ECR image Repository
+    Value: !Ref SparkOnLambdaECRRepository
+  ImageRepoUri:
+    Description: ECR  Repository URI
+    Value: !GetAtt 
+      - SparkOnLambdaECRRepository
+      - RepositoryUri
+  ImageUri:
+    Description: ECR image URI
+    Value: !Join 
+      - ':'
+      - - !GetAtt 
+          - SparkOnLambdaECRRepository
+          - RepositoryUri
+        - latest
+Resources:
+  SparkOnLambdaImageCodeBuildRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: 'sts:AssumeRole'
+      RoleName: !Sub 'Spark-codebuild-${AWS::StackName}-role'
+    Metadata:
+      SamResourceId: SparkOnLambdaImageCodeBuildRole
+  SparkOnLambdaimageCodeBuildPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      Roles:
+        - !Ref SparkOnLambdaImageCodeBuildRole
+      ManagedPolicyName: !Sub 'spark-codebuild-policy-${AWS::StackName}'
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ListImagesInRepository
+            Effect: Allow
+            Action:
+              - 'ecr:ListImages'
+            Resource: !Sub >-
+              arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${SparkOnLambdaECRRepository}
+          - Sid: LogAccess
+            Effect: Allow
+            Action:
+              - 'logs:Create*'
+              - 'logs:Describe*'
+              - 'logs:Get*'
+              - 'logs:List*'
+              - 'logs:Put*'
+            Resource: '*'
+          - Sid: GetAuthorizationToken
+            Effect: Allow
+            Action:
+              - 'ecr:GetAuthorizationToken'
+            Resource: '*'
+          - Sid: ManageRepositoryContents
+            Effect: Allow
+            Action:
+              - 'ecr:BatchCheckLayerAvailability'
+              - 'ecr:GetDownloadUrlForLayer'
+              - 'ecr:GetRepositoryPolicy'
+              - 'ecr:DescribeRepositories'
+              - 'ecr:ListImages'
+              - 'ecr:DescribeImages'
+              - 'ecr:BatchGetImage'
+              - 'ecr:InitiateLayerUpload'
+              - 'ecr:UploadLayerPart'
+              - 'ecr:CompleteLayerUpload'
+              - 'ecr:PutImage'
+            Resource: !Sub >-
+              arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${SparkOnLambdaECRRepository}
+    Metadata:
+      SamResourceId: SparkOnLambdaimageCodeBuildPolicy
+  SparkOnLambdaECRRepository:
+    Type: 'AWS::ECR::Repository'
+    Properties:
+      ImageScanningConfiguration:
+        ScanOnPush: 'true'
+      RepositoryName: !Sub '${ImageRepoPrefix}-${AWS::StackName}'
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+               "rules": [
+           {
+             "rulePriority": 2,
+             "description": "Keep only last 10 tagged images, expire all others",
+             "selection": {
+               "tagStatus": "any",
+               "countType": "imageCountMoreThan",
+               "countNumber": 10
+             },
+             "action": {
+               "type": "expire"
+             }
+           },
+           {
+                       "rulePriority": 1,
+                       "description": "Expire Untagged images older than 5 days",
+                       "selection": {
+                           "tagStatus": "untagged",
+                           "countType": "sinceImagePushed",
+                           "countUnit": "days",
+                           "countNumber": 5
+                       },
+                       "action": {
+                           "type": "expire"
+                       }
+                   }
+           ]
+           }
+    Metadata:
+      SamResourceId: SparkOnLambdaECRRepository
+  SparkOnLambdaCodeBuild:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Description: >-
+        This Project builds the spark on lambda container with all dependcies
+        and a entry point lambda script sourced from the  github repository
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: 'aws/codebuild/amazonlinux2-x86_64-standard:3.0'
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_DEFAULT_REGION
+            Value: !Sub '${AWS::Region}'
+          - Name: AWS_ACCOUNT_ID
+            Value: !Sub '${AWS::AccountId}'
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref SparkOnLambdaECRRepository
+          - Name: FRAMEWORK
+            Value: !Ref Framework
+      Name: !Sub 'spark-on-aws-lambda-build-${AWS::StackName}'
+      QueuedTimeoutInMinutes: 10
+      ServiceRole: !GetAtt 
+        - SparkOnLambdaImageCodeBuildRole
+        - Arn
+      Source:
+        Type: NO_SOURCE
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+            build:
+              commands:
+                # Pull the Docker image from Docker Hub
+                - docker pull vivekmittal514/spark-on-aws-lambda-deequ:latest
+                # Tag the Docker image with ECR repository URI
+                - docker tag vivekmittal514/spark-on-aws-lambda-deequ:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:latest
+            post_build:
+              commands:
+                - echo Build completed on `date`
+                - echo Pushing the Docker image...
+                - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:latest
+      TimeoutInMinutes: 20
+    Metadata:
+      SamResourceId: SparkOnLambdaCodeBuild
+  InvokeImageBuild:
+    DependsOn: ImageBuildLambda
+    Type: 'Custom::InvokeImageBuildLambda'
+    Properties:
+      ServiceToken: !GetAtt 
+        - ImageBuildLambda
+        - Arn
+    Metadata:
+      SamResourceId: InvokeImageBuild
+  ImageBuildLambda:
+    Type: 'AWS::Lambda::Function'
+    Metadata:
+      SamResourceId: ImageBuildLambda
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import time
+          import logging
+          from botocore.vendored import requests
+          import cfnresponse
+
+          code_build_project_name=os.environ['CODEBUILD_PROJECT']
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          client = boto3.client('codebuild')
+          def lambda_handler(event, context):
+            logger.info('got event {}'.format(event))
+            responseData = {}
+
+            if event['RequestType'] in ['Create','Update']:
+              logger.info('Running code build for project '+code_build_project_name)
+              response = client.start_build(projectName=code_build_project_name)
+              build_id=response['build']['arn']
+              logger.info(response)
+              responseData['buildid'] = build_id
+            else: # delete 
+              responseData['buildid'] = 'NA'
+            logger.info('responseData {}'.format(responseData))
+            if event.get('StackId',None) is not None:
+              logger.info('Cfn request. Send Response')
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, responseData['buildid'])
+      Description: A function that runs the code build project.
+      Handler: index.lambda_handler
+      Role: !GetAtt 
+        - ImageBuildLambdaRole
+        - Arn
+      Runtime: python3.8
+      Environment:
+        Variables:
+          CODEBUILD_PROJECT: !Ref SparkOnLambdaCodeBuild
+      Tags:
+        - Key: 'lambda:createdBy'
+          Value: SAM
+  ImageBuildLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: ImageBuildLambdaRolePolicy0
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 'codebuild:StartBuild'
+                  - 'codebuild:Get*'
+                  - 'codebuild:List*'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - SparkOnLambdaCodeBuild
+                  - Arn
+            Version: 2012-10-17
+        - PolicyName: ImageBuildLambdaRolePolicy1
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 'iam:PassRole'
+                Effect: Allow
+                Resource: !GetAtt 
+                  - SparkOnLambdaImageCodeBuildRole
+                  - Arn
+            Version: 2012-10-17
+        - PolicyName: ImageBuildLambdaRolePolicy2
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 'logs:*'
+                  - 'codebuild:BatchGet*'
+                Effect: Allow
+                Resource: '*'
+            Version: 2012-10-17
+      Tags:
+        - Key: 'lambda:createdBy'
+          Value: SAM

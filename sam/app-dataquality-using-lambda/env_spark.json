@@ -1,0 +1,4 @@
+{
+        "INPUT_PATH": "s3a://redshift-downloads/spatial-data/accommodations.csv",
+        "OUTPUT_PATH": "s3a://deequ-image-builder-myscriptbucket-mwwfhk8ylsiv/OUTPUT/"
+}

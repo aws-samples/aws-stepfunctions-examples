@@ -1,0 +1,172 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  python3.9
+
+  Sample SAM Template for dataquality-using-lambda
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+    MemorySize: 128
+
+Parameters:
+  ImageUri:
+    Description: 'Mandatory: ECR Uri for the image. If not present, then create and push using the sam-imagebuilder.yaml in the github https://github.com/aws-samples/spark-on-aws-lambda '
+    Type: String
+    Default: ''
+  SparkScript:
+    Type: String
+    Description: 'Mandatory: Name of the spark script to be uploaded to S3 eg. dataquality-check-function.py'
+    Default: 'dataquality-check-function.py'
+  InputPath:
+    Type: String
+    Description: 'Input data file to perform data quality checks'
+    Default: 's3a://redshift-downloads/spatial-data/accommodations.csv'
+
+Resources:
+#Write sam code for a state machine that takes input as INPUT_PATH and OUTPUT_PATH, runs DeequOnLambdaFunction, and based on Pass or Fail output in Choice state, call another Lambda AggregateFunction and finally publish the results to SNS topic and end the execution
+  DataQualityUsingLambdaStateMachine:
+    Type: AWS::Serverless::StateMachine 
+    Properties:
+      DefinitionUri: statemachine/dataquality.asl.json
+      DefinitionSubstitutions:
+        DeequOnLambdaFunctionArn: !GetAtt DeequOnLambdaFunction.Arn
+        AggregateFunctionArn: !GetAtt AggregateFunction.Arn
+        DataQualityUsingLambdaTopicArn: !Ref DataQualityUsingLambdaTopic
+        MyScriptBucketArn: !Ref MyScriptBucket
+        input_path: !Ref InputPath
+        output_path: !Sub s3a://${MyScriptBucket}/OUTPUT/
+        MyScriptBucketName: !Ref MyScriptBucket
+        MySparkScript: !Ref SparkScript
+        CopyInputFileFunctionArn: !GetAtt CopyInputFileFunction.Arn
+        DataQualityUsingLambdaTopicArn: !Ref DataQualityUsingLambdaTopic
+      Policies: 
+        - LambdaInvokePolicy:
+            FunctionName: !Ref DeequOnLambdaFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AggregateFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CopyInputFileFunction            
+        - S3CrudPolicy:
+            BucketName: !Ref MyScriptBucket
+        - S3ReadPolicy:
+            BucketName: "*"
+        - SNSPublishMessagePolicy:
+            TopicName: !Sub 'dataquality-using-lambda-topic-${AWS::StackName}'
+        - Statement:
+          - Effect: Allow
+            Action:
+              - states:StartExecution
+              - states:DescribeExecution
+              - states:StopExecution
+            Resource: '*'
+
+
+#Write sam code for creating SNS topic to publish the message
+  DataQualityUsingLambdaTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'dataquality-using-lambda-topic-${AWS::StackName}'
+
+#Write sam code for creating S3 bucket to store input data, good files, bad files and verification results
+  MyScriptBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  DeequOnLambdaFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      MemorySize: 3008
+      Timeout: 180 
+      PackageType: Image
+      ImageUri: !Ref ImageUri      
+      Environment:
+        Variables:
+          SPARK_SCRIPT: !Ref SparkScript
+          SCRIPT_BUCKET: !Ref MyScriptBucket
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource:
+              Fn::Sub:
+                - "arn:aws:ecr:${Region}:${Account}:repository/${RepositoryName}"
+                - Region: !Select [3, !Split [".", !Ref ImageUri ]]
+                  Account: !Select [0, !Split [".", !Ref ImageUri ]]
+                  RepositoryName: !Select [1, !Split ["/", !Select [ 0, !Split [":", !Select [5, !Split [".", !Ref ImageUri ]]]]]]
+        - S3CrudPolicy:
+            BucketName: !Ref MyScriptBucket
+        - S3ReadPolicy:
+            BucketName: "*"
+
+  AggregateFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: aggregate_function/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Timeout: 30
+      MemorySize: 128
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          INPUT_BUCKET: !Ref MyScriptBucket
+          INPUT_PREFIX: INPUT/
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref MyScriptBucket
+
+  CopyInputFileFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: copy-input-file/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Timeout: 30
+      MemorySize: 128
+      Architectures:
+        - x86_64
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref MyScriptBucket
+        - S3ReadPolicy:
+            BucketName: "*"
+
+Outputs:
+  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+  # Find out more about other implicit resources you can reference within SAM
+  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+  DeequOnLambdaFunction:
+    Description: "DeequOnLambdaFunction ARN"
+    Value: !GetAtt DeequOnLambdaFunction.Arn
+  DeequOnLambdaFunctionIamRole:
+    Description: "Implicit IAM Role created for DeequOnLambdaFunction"
+    Value: !GetAtt DeequOnLambdaFunctionRole.Arn
+  AggregateFunction:
+    Description: "AggregateFunction  ARN"
+    Value: !GetAtt AggregateFunction.Arn
+  AggregateFunctionIamRole:
+    Description: "Implicit IAM Role created for AggregateFunction"
+    Value: !GetAtt AggregateFunctionRole.Arn

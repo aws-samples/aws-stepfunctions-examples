@@ -1,0 +1,176 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Copy input file",
+
+  "States": {
+    "Copy input file":
+    { 
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CopyInputFileFunctionArn}",
+        "Payload":{
+        "INPUT_PATH":"${input_path}",
+        "OUTPUT_BUCKET":"${MyScriptBucketName}"
+        }
+      },
+      "Next": "Data quality using Lambda"
+    },
+    "Data quality using Lambda": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "OutputPath": "$.Payload",
+      "Parameters": {
+        "FunctionName": "${DeequOnLambdaFunctionArn}",
+        "Payload":{
+        "INPUT_PATH":"${input_path}",
+        "OUTPUT_PATH":"${output_path}"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "List Data Quality Results"
+    },
+    "List Data Quality Results": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:s3:listObjectsV2",
+      "Parameters": {
+        "Bucket": "${MyScriptBucketName}",
+        "Prefix": "OUTPUT/verification-results/part"
+      },
+      "ResultPath": "$",
+      "Next": "Parse Data Quality Results"
+    },
+    "Parse Data Quality Results": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "DISTRIBUTED",
+          "ExecutionType": "STANDARD"
+        },
+        "StartAt": "Pass",
+        "States": {
+          "Pass": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },    "Next": "FilterFailures",
+      "Label": "Map",
+      "MaxConcurrency": 1000,
+      "ItemReader": {
+        "Resource": "arn:aws:states:::s3:getObject",
+        "ReaderConfig": {
+          "InputType": "CSV",
+          "CSVHeaderLocation": "GIVEN",
+          "CSVHeaders": [
+            "check",
+            "check_level",
+            "check_status",
+            "constraint",
+            "constraint_status",
+            "constraint_message"
+          ]
+        },
+        "Parameters": {
+          "Bucket.$": "$.Name",
+          "Key.$": "$.Contents[0].Key"
+        }
+      },
+      "ResultPath": "$.QualityResults",
+      "ItemSelector": {
+        "check_status.$": "$$.Map.Item.Value.check_status",
+        "constraint.$": "$$.Map.Item.Value.constraint",
+        "constraint_status.$": "$$.Map.Item.Value.constraint_status",
+        "constraint_message.$": "$$.Map.Item.Value.constraint_message"
+      }
+    },
+    "FilterFailures": {
+      "Type": "Pass",
+      "InputPath": "$..QualityResults[?(@.constraint_status==Failure)]",
+      "ResultPath": "$.QualityResults",
+      "Next": "Check Data Quality Results"
+    },
+    "Check Data Quality Results": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.QualityResults[0]['check_status']",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$.QualityResults[0]['check_status']",
+              "StringEquals": "Error"
+            }
+          ],
+          "Comment": "Pass",
+          "Next": "Send Failure Message"
+        }
+      ],
+      "Default": "Aggregate Data"
+    },
+    "Send Failure Message": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "Message.$": "States.Format('Data Quality results failed. Here are the contraints that failed {}. For details, please see the OUTPUT folder of the S3 bucket {}.',$..constraint,$.Name)",
+        "TopicArn": "${DataQualityUsingLambdaTopicArn}"
+      },
+      "Next": "FailState",
+      "ResultPath": null
+    },
+    "FailState": {
+      "Type": "Fail",
+      "CausePath": "States.Format('Data Quality Results {}', $.QualityResults)",
+      "ErrorPath": "States.Format('Data Quality check failed for the input file')"
+    },
+    "Aggregate Data": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "ResultPath": null,
+      "Parameters": {
+        "FunctionName": "${AggregateFunctionArn}",
+        "Payload": {
+          "good_file_key":"input/",
+          "bucket_name":"${MyScriptBucketName}"
+          }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "Send Success Message"
+    },
+    "Send Success Message": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "Message.$": "States.Format('Data Quality results are good. You can view the aggregated data of the input file in the S3 bucket {} under OUTPUT folder',$.Name)",
+        "TopicArn": "${DataQualityUsingLambdaTopicArn}"
+      },
+      "End": true
+    }
+  }
+}
