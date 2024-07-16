@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: app-sfn-kms-integration
+
+Mappings:
+  StateMachine:
+    Name: 
+      Value: StockTrading-StateMachine
+
+Resources:
+  StockTradingStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !FindInMap ['StateMachine', 'Name', 'Value']
+      RoleArn: !GetAtt StockTradingStateMachineExecutionRole.Arn
+      EncryptionConfiguration:
+        KmsKeyId: !Ref StocksKmsKey
+        KmsDataKeyReusePeriodSeconds: 100
+        Type: CUSTOMER_MANAGED_KMS_KEY
+      DefinitionSubstitutions:
+        StockCheckerFunctionArn: !GetAtt StockCheckerFunction.Arn
+        StockSellerFunctionArn: !GetAtt StockSellerFunction.Arn
+        StockBuyerFunctionArn: !GetAtt StockBuyerFunction.Arn
+        DDBPutItem: !Sub arn:${AWS::Partition}:states:::dynamodb:putItem
+        DDBTable: !Ref TransactionTable
+      Definition:
+        Comment: A state machine that does mock stock trading.
+        StartAt: Check Stock Value
+        States:
+          Check Stock Value:
+            Type: Task
+            Resource: "${StockCheckerFunctionArn}"
+            Next: Buy or Sell?
+          Buy or Sell?:
+            Type: Choice
+            Choices:
+            - Variable: "$.stock_price"
+              NumericLessThanEquals: 50
+              Next: Buy Stock
+            Default: Sell Stock
+          Sell Stock:
+            Type: Task
+            Resource: "${StockSellerFunctionArn}"
+            Next: Record Transaction
+          Buy Stock:
+            Type: Task
+            Resource: "${StockBuyerFunctionArn}"
+            Next: Record Transaction
+          Record Transaction:
+            Type: Task
+            Resource: "${DDBPutItem}"
+            Parameters:
+              TableName: "${DDBTable}"
+              Item:
+                Id:
+                  S.$: "$.id"
+                Type:
+                  S.$: "$.type"
+                Price:
+                  N.$: "$.price"
+                Quantity:
+                  N.$: "$.qty"
+                Timestamp:
+                  S.$: "$.timestamp"
+            Retry:
+            - ErrorEquals:
+              - States.TaskFailed
+              IntervalSeconds: 20
+              MaxAttempts: 5
+              BackoffRate: 10
+            End: true
+
+  StocksKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Symmetric KMS key used for encryption/decryption provided by customer
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: '*'
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt StockTradingStateMachineExecutionRole.Arn
+            Action:
+              - kms:GenerateDataKey*
+              - kms:Decrypt
+            Resource: '*'
+            Condition:
+              StringEquals:
+                kms:EncryptionContext:aws:states:stateMachineArn: !Join 
+                  - ":"
+                  - - !Sub arn:${AWS::Partition}:states
+                    - !Ref AWS::Region
+                    - !Ref AWS::AccountId
+                    - stateMachine
+                    - !FindInMap ['StateMachine', 'Name', 'Value']
+
+  StockTradingStateMachineExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub states.${AWS::Region}.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: 
+                  - !GetAtt StockCheckerFunction.Arn
+                  - !GetAtt StockSellerFunction.Arn
+                  - !GetAtt StockBuyerFunction.Arn
+        - PolicyName: DDBWritePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource: !GetAtt TransactionTable.Arn
+
+  StockCheckerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/stock-checker/
+      Handler: app.lambdaHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - arm64
+
+  StockSellerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/stock-seller/
+      Handler: app.lambdaHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - arm64
+
+  StockBuyerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/stock-buyer/
+      Handler: app.lambdaHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - arm64
+
+  TransactionTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: Id
+        Type: String
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+Outputs:
+  StockTradingStateMachineArn:
+    Description: "Stock Trading state machine ARN"
+    Value: !Ref StockTradingStateMachine

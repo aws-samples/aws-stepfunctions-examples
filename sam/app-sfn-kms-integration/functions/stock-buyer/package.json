@@ -1,0 +1,10 @@
+{
+  "name": "stock_buyer",
+  "version": "1.0.0",
+  "description": "Mock stock buyer for NodeJS",
+  "main": "app.js",
+  "repository": "TODO",
+  "author": "SAM CLI",
+  "license": "MIT",
+  "dependencies": {}
+}
