@@ -98,7 +98,7 @@ Resources:
             Principal:
               AWS: !GetAtt StockTradingStateMachineExecutionRole.Arn
             Action:
-              - kms:GenerateDataKey*
+              - kms:GenerateDataKey
               - kms:Decrypt
             Resource: '*'
             Condition:
