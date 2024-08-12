@@ -53,9 +53,6 @@ if __name__ == "__main__":
 
 
     aws_region = os.environ['AWS_REGION']
-    aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
-    aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
-    session_token = os.environ['AWS_SESSION_TOKEN']
 
     print(" ******* Input path ", input_path)
     print(" ******* Output path ", output_path)
@@ -70,9 +67,6 @@ if __name__ == "__main__":
     .config("spark.driver.memory", "5g") \
     .config("spark.executor.memory", "5g") \
     .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
-    .config("spark.hadoop.fs.s3a.access.key", aws_access_key_id) \
-    .config("spark.hadoop.fs.s3a.secret.key", aws_secret_access_key) \
-    .config("spark.hadoop.fs.s3a.session.token",session_token) \
     .config("spark.hadoop.fs.s3a.aws.credentials.provider","org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider") \
     .getOrCreate()
 
@@ -117,7 +111,6 @@ if __name__ == "__main__":
     checkResult_df.show()
 
     checkResult_df.repartition(1).write.option("header", "true").mode('overwrite').csv(output_path+"/verification-results/", sep=',')
-    #checkResult_df.repartition(1).write.mode('overwrite').csv(output_path+"/verification-results/", sep=',')
 
 
     # Filtering for any failed data quality constraints
@@ -134,27 +127,7 @@ if __name__ == "__main__":
     checkResult_df.show()
     
     checkResult_df.repartition(1).write.option("header", "true").mode('overwrite').csv(output_path+"/verification-results-metrics/", sep=',')
-    #checkResult_df.repartition(1).write.mode('overwrite').csv(output_path+"/verification-results-metrics/", sep=',')
 
             
-    if df_checked_constraints_failures.count() > 0:
-         deequ_check_pass = "Fail"
-    else:
-         deequ_check_pass = "Pass"
-    
-    # Print the value of deequ_check_pass environment variable 
-    print("deequ_check_pass = ", deequ_check_pass)
-
-    # Write value of DEEQU_CHECK_PASS environment variable to a file named DEEQU_CHECK_PASS.txt in /tmp directory
-    with open('/tmp/DEEQU_CHECK_PASS.txt', 'w') as f:
-         f.write(deequ_check_pass)
-         f.close()
-         print("DEEQU_CHECK_PASS.txt file written to /tmp directory")
-
-    # Add the file DEEQU_CHECK_PASS.txt in /tmp lambda directory to S3 bucket
-    s3_client = boto3.client('s3')
-    s3_client.upload_file('/tmp/DEEQU_CHECK_PASS.txt', bucket_name, 'DEEQU_CHECK_PASS.txt')
-    print("DEEQU_CHECK_PASS.txt file added to S3 bucket")    
-
     spark.sparkContext._gateway.shutdown_callback_server()
     spark.stop()

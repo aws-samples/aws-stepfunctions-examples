@@ -1,8 +1,0 @@
-check,check_level,check_status,constraint,constraint_status,constraint_message
-Accomodations,Error,Success,SizeConstraint(Size(None)),Success,""
-Accomodations,Error,Success,"CompletenessConstraint(Completeness(name,None))",Success,""
-Accomodations,Error,Success,"UniquenessConstraint(Uniqueness(List(id),None))",Success,""
-Accomodations,Error,Success,"CompletenessConstraint(Completeness(host_name,None))",Success,""
-Accomodations,Error,Success,"CompletenessConstraint(Completeness(neighbourhood,None))",Success,""
-Accomodations,Error,Success,"CompletenessConstraint(Completeness(price,None))",Success,""
-Accomodations,Error,Success,"ComplianceConstraint(Compliance(price is non-negative,COALESCE(CAST(price AS DECIMAL(20,10)), 0.0) >= 0,None))",Success,""
