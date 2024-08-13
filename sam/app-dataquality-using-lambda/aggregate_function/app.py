@@ -47,7 +47,7 @@ def lambda_handler(event, context):
 
 
             # Perform aggregation by the "reviews" column
-            aggregated_df = df.groupby('neighbourhood_group').agg([
+            aggregated_df = df.group_by('neighbourhood_group').agg([
                 pl.col('reviews_per_month').mean().alias('average_reviews_per_month'),
                 pl.col('price').mean().alias('average_price'),
                 pl.col('price').min().alias('min_price'),
