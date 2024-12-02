@@ -1,0 +1,32 @@
+StartAt: List locks with current allocations
+States:
+  List locks with current allocations:
+    Type: Task
+    Parameters:
+      TableName: ${TableSemaphore}
+      FilterExpression: currentlockcount >= :m1
+      ExpressionAttributeValues:
+        ':m1':
+          'N': '1'
+      ProjectionExpression: LockName
+    Resource: arn:aws:states:::aws-sdk:dynamodb:scan
+    OutputPath: $.Items
+    Next: Map
+  Map:
+    Type: Map
+    ItemProcessor:
+      ProcessorConfig:
+        Mode: INLINE
+      StartAt: Run Lock Release
+      States:
+        Run Lock Release:
+          Type: Task
+          Resource: arn:aws:states:::aws-sdk:sfn:startSyncExecution
+          Parameters:
+            StateMachineArn: ${StateMachineUtilReleaseLock}
+            Input:
+              lock_name.$: $.LockName.S
+              lock_entry.$: $$.Execution.Input.detail.executionArn
+          ResultPath: null
+          End: true
+    End: true

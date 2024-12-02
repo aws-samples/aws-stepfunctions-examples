@@ -1,0 +1,55 @@
+Comment: A state machine to release a semaphore using DynamoDB
+StartAt: Confirm Input
+States:
+  Confirm Input:
+    Type: Choice
+    Choices:
+    - And:
+      - Variable: "$.lock_name"
+        IsPresent: true
+      - Variable: "$.lock_name"
+        IsString: true
+      - Variable: "$.lock_entry"
+        IsPresent: true
+      - Variable: "$.lock_entry"
+        IsString: true
+      Next: Release Lock
+    Default: Insufficient Input
+  Insufficient Input:
+    Type: Fail
+    Error: InsufficientInput
+  Release Lock:
+    Type: Task
+    Resource: arn:aws:states:::dynamodb:updateItem
+    Parameters:
+      TableName: "${TableSemaphore}"
+      Key:
+        LockName:
+          S.$: "$$.Execution.Input.lock_name"
+      ExpressionAttributeNames:
+        "#currentlockcount": currentlockcount
+        "#lockownerid.$": "$.lock_entry"
+      ExpressionAttributeValues:
+        ":decrease":
+          N: '1'
+      UpdateExpression: 'SET #currentlockcount = #currentlockcount - :decrease REMOVE
+        #lockownerid'
+      ConditionExpression: attribute_exists(#lockownerid)
+      ReturnValues: UPDATED_NEW
+    Retry:
+    - ErrorEquals:
+      - DynamoDB.ConditionalCheckFailedException
+      MaxAttempts: 0
+    - ErrorEquals:
+      - States.ALL
+      MaxAttempts: 5
+      BackoffRate: 1.5
+    Catch:
+    - ErrorEquals:
+      - DynamoDB.ConditionalCheckFailedException
+      Next: Success State
+      ResultPath: 
+    ResultPath: 
+    Next: Success State
+  Success State:
+    Type: Succeed

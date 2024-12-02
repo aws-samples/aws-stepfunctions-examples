@@ -1,0 +1,120 @@
+StartAt: Prepare Configuration
+QueryLanguage: JSONata
+States:
+  Prepare Configuration:
+    Type: Pass
+    Next: Aquire Lock
+    Assign:
+      inbucket: "{% $states.input.inbucketname %}"
+      inkey: "{% $states.input.inkey %}"
+      inputfile: "{% 's3://' &  $states.input.inbucketname & '/' & $states.input.inkey %}"
+      jobname: "{% $states.input.job_name %}"
+      outBucketname: ${OutputBucket}
+  Aquire Lock:
+    Type: Task
+    Resource: arn:aws:states:::states:startExecution.sync:2
+    Arguments:
+      StateMachineArn: ${StateMachineUtilAquireLock}
+      Input:
+        lock_name: bedrock_summarization
+        lock_entry: "{% $states.context.Execution.Id %}"
+        concurrency_limit: 5
+        AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID: "{% $states.context.Execution.Id %}"
+    Next: Create Prompt From Transcription
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 11
+        MaxDelaySeconds: 3600
+        JitterStrategy: FULL
+  Create Prompt From Transcription:
+    Type: Task
+    Resource: arn:aws:states:::lambda:invoke
+    Arguments:
+      FunctionName: ${FunctionPreparePromptFromTranscript}
+      Payload:
+        bucket_name: "{% $inbucket %}"
+        key: "{% $inkey %}"
+        prompt_text: Create a summary from the following transcription of a meeting
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 1
+        MaxAttempts: 3
+        BackoffRate: 2
+    Next: Create Summary of Transcription
+    Assign:
+      prompt_file: "{% $states.result.Payload %}"
+  Create Summary of Transcription:
+    Type: Task
+    Resource: arn:aws:states:::bedrock:invokeModel
+    Arguments:
+      ModelId: "{% 'arn:aws:bedrock:' & $split($states.context.StateMachine.Id,':')[-4] & '::foundation-model/anthropic.claude-v2:1'%}"
+      ContentType: application/json
+      Input:
+        S3Uri: "{% $prompt_file.s3uri %}"
+    Assign:
+      prompt_output: "{% $states.result %}"
+    Next: Store Transcription Summary
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 9
+        MaxDelaySeconds: 300
+  Store Transcription Summary:
+    Type: Task
+    Next: Publish Event - Summarization Completed
+    Arguments:
+      Body: "{% $prompt_output %}"
+      Bucket: "{% $outBucketname %}"
+      Key: "{% 'completed-files/' & $jobname & '/transcription_summary_anthropic.claude-v2.json' %}"
+    Resource: arn:aws:states:::aws-sdk:s3:putObject
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 10
+        MaxDelaySeconds: 300
+        JitterStrategy: FULL
+  Publish Event - Summarization Completed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Arguments:
+        Entries:
+          - Detail:
+              source_bucket: "{% $inbucket %}"
+              source_key: "{% $inkey %}"
+              summary_key: "{% 'completed-files/' & $jobname & '/transcription_summary_anthropic.claude-v2.json' %}"
+              summary_bucket: "{% $outBucketname %}"
+            DetailType: ${EventTranscriptionSummarizationCompleted}
+            EventBusName: ${EventBusName}
+            Source: ${EventSource}
+    Next: Release Lock
+  Release Lock:
+    Type: Task
+    Resource: arn:aws:states:::states:startExecution.sync:2
+    Arguments:
+      StateMachineArn: ${StateMachineUtilReleaseLock}
+      Input:
+        lock_name: bedrock_summarization
+        lock_entry: "{% $states.context.Execution.Id %}"
+        AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID: "{% $states.context.Execution.Id %}"
+    Next: Success
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 11
+        MaxDelaySeconds: 3600
+        JitterStrategy: FULL
+  Success:
+    Type: Succeed

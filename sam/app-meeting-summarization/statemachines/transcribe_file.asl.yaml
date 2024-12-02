@@ -1,0 +1,160 @@
+StartAt: Prepare Configuration
+QueryLanguage: JSONata
+States:
+  Prepare Configuration:
+    Type: Pass
+    Next: Aquire Lock
+    Assign:
+      inBucket: "{% $states.input.detail.bucket.name %}"
+      inKey: "{% $states.input.detail.object.key %}"
+      inFilename: "{% $split($states.input.detail.object.key, '/')[-1] %}"
+      s3Uri: "{% 's3://' & $states.input.detail.bucket.name & '/' & $states.input.detail.object.key %}"
+      outBucketname: ${OutputBucket}
+      outBase: intermediate-files
+      resBase: completed-files
+      jobName: "{% $now('[Y]-[M]-[D]') & '--' & $uuid() & '--' & $replace($split($states.input.detail.object.key, '/')[-1],' ','-') %}"
+  Aquire Lock:
+    Type: Task
+    Resource: arn:aws:states:::states:startExecution.sync:2
+    Arguments:
+      StateMachineArn: ${StateMachineUtilAquireLock}
+      Input:
+        lock_name: video_transcriptions
+        lock_entry: "{% $states.context.Execution.Id %}"
+        concurrency_limit: 10
+        AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID: "{% $states.context.Execution.Id %}"
+    Next: Start Transcription Job
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 11
+        MaxDelaySeconds: 3600
+        JitterStrategy: FULL
+    Output: null
+  Start Transcription Job:
+    Type: Task
+    Arguments:
+      Media:
+        MediaFileUri: "{% $s3Uri %}"
+      TranscriptionJobName: "{% $jobName %}"
+      OutputBucketName: "{% $outBucketname %}"
+      OutputKey: "{% $outBase & '/' & $jobName & '/transcription.json' %}"
+      IdentifyLanguage: true
+    Resource: arn:aws:states:::aws-sdk:transcribe:startTranscriptionJob
+    Next: Wait
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 9
+        MaxDelaySeconds: 300
+  Wait:
+    Type: Wait
+    Seconds: 15
+    Next: Get Transcription Job
+  Get Transcription Job:
+    Type: Task
+    Arguments:
+      TranscriptionJobName: "{% $jobName %}"
+    Resource: arn:aws:states:::aws-sdk:transcribe:getTranscriptionJob
+    Next: Is Job Completed?
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 9
+        JitterStrategy: FULL
+        MaxDelaySeconds: 300
+    Assign:
+      transcription_job_info:
+        job_name: "{% $states.result.TranscriptionJob.TranscriptionJobName %}"
+        job_status: "{% $states.result.TranscriptionJob.TranscriptionJobStatus %}"
+        job_start_time: "{% $states.result.TranscriptionJob.StartTime %}"
+        job_completion_time: "{% $states.result.TranscriptionJob.CompletionTime %}"
+        language: "{% $states.result.TranscriptionJob.LanguageCode %}"
+        mediaformat: "{% $states.result.TranscriptionJob.MediaFormat %}"
+        transcript_file_uri: "{% $states.result.TranscriptionJob.Transcript.TranscriptFileUri %}"
+        transcript_file_s3: "{% $s3Uri %}"
+        transcript_file_bucket: "{% $outBucketname %}"
+        transcript_file_key: "{% $outBase & '/' & $jobName & '/transcription.json' %}"
+        input_file_name: "{% $inFilename %}"
+  Is Job Completed?:
+    Type: Choice
+    Choices:
+      - Condition: "{% $states.input.TranscriptionJob.TranscriptionJobStatus = 'COMPLETED' %}"
+        Next: Write Transcription Job Summary
+        Comment: Tanscription Job Completed Successfully
+      - Condition: "{% $states.input.TranscriptionJob.TranscriptionJobStatus = 'FAILED' %}"
+        Next: Transcription Failed
+        Comment: Tanscription Job Failed
+    Default: Wait
+  Transcription Failed:
+    Type: Fail
+  Write Transcription Job Summary:
+    Type: Task
+    Next: Copy Transcription File From Temporary
+    Arguments:
+      Body: "{% $transcription_job_info %}"
+      Bucket: "{% $outBucketname %}"
+      Key: "{% $resBase & '/' & $jobName & '/transcription_job_summary.json' %}" 
+    Resource: arn:aws:states:::aws-sdk:s3:putObject
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 10
+        MaxDelaySeconds: 300
+        JitterStrategy: FULL
+  Copy Transcription File From Temporary:
+    Type: Task
+    Next: Publish Event - Transcription Completed
+    Arguments:
+      CopySource: "{% $transcription_job_info.transcript_file_bucket &  '/' & $transcription_job_info.transcript_file_key %}"
+      Bucket: "{% $outBucketname %}"
+      Key: "{% $resBase & '/' & $jobName & '/transcription_output.json' %}"
+    Resource: arn:aws:states:::aws-sdk:s3:copyObject
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 10
+        MaxDelaySeconds: 300
+        JitterStrategy: FULL
+  Publish Event - Transcription Completed:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Arguments:
+      Entries:
+        - Detail:
+            transcription_job_info: "{% $transcription_job_info %}"
+            result_folder: "{% $resBase & '/' & $jobName & '/' %}"
+          DetailType: ${EventTypeTranscriptionCompleted}
+          EventBusName: ${EventBusName}
+          Source: ${EventSource}
+    Next: Release Lock
+  Release Lock:
+    Type: Task
+    Resource: arn:aws:states:::states:startExecution.sync:2
+    Arguments:
+      StateMachineArn: ${StateMachineUtilReleaseLock}
+      Input:
+        lock_name: video_transcriptions
+        lock_entry: "{% $states.context.Execution.Id %}"
+        AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID: "{% $states.context.Execution.Id %}"
+    Next: Success
+    Retry:
+      - ErrorEquals:
+          - States.ALL
+        BackoffRate: 2
+        IntervalSeconds: 1
+        MaxAttempts: 11
+        MaxDelaySeconds: 3600
+        JitterStrategy: FULL
+  Success:
+    Type: Succeed

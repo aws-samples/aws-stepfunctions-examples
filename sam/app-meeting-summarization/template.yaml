@@ -1,0 +1,378 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: "Serverless Communication Nexus"
+
+Parameters:
+  ParameterPrefix:
+    Type: String
+    Default: "scn"
+    Description: "Prefix to be used in names of the things created by this stack."
+
+Mappings:
+  Names:
+    Resources:
+      EventBusName: scneventbus
+      EventBusArchive: scneventbus-archive
+      BucketName: scnbucket
+      ConfigTableName: configuration
+      LockTableName: locks
+      StateMachineUtilTranscribeFile: transcribe-file
+      StateMachineSummarizeTranscription: summarize-transcription
+      StateMachineUtilAquireLock: lock-aquire
+      StateMachineUtilReleaseLock: lock-release
+      StateMachineUtilCleanLocksOnFailure: lock-cleanup-on-failure
+      FunctionPreparePromptFromTranscript: prepare_bedrock_input_from_transcription
+      LogGroupgStateMachines: StateMachineLogs
+    S3Paths:
+      IncomingVideo: incoming-files/
+      ProcessedVideo: completed-files/
+      TemporaryRoot: intermediate-files/
+  EventStructures:
+    EventSources:
+      IngressProcessor: scn.ip
+    EventTypes:
+      TranscriptionJobCompleted: Transcription Job Completed
+      TranscriptionSummarizationCompleted: Transcription Summarization Completed
+
+Resources:
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "states.amazonaws.com"
+                - "lambda.amazonaws.com"
+                - "events.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: AppPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                - events:PutTargets
+                - events:PutRule
+                - events:PutEvents
+                - events:DescribeRule
+                - states:StartExecution
+                - states:*
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - xray:GetSamplingRules
+                - xray:GetSamplingTargets
+                - logs:CreateLogDelivery
+                - logs:GetLogDelivery
+                - logs:UpdateLogDelivery
+                - logs:DeleteLogDelivery
+                - logs:ListLogDeliveries
+                - logs:PutResourcePolicy
+                - logs:DescribeResourcePolicies
+                - logs:DescribeLogGroups
+                - cloudwatch:PutMetricData
+                - states:StartExecution
+                - states:DescribeExecution
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - lambda:InvokeFunction
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                - s3:*
+                Resource: !Join ["",["arn:aws:s3:::", !Ref ParameterPrefix, "-", !FindInMap ["Names","Resources","BucketName"],"-",!Ref AWS::AccountId]]
+              -
+                Effect: Allow
+                Action:
+                - s3:*
+                Resource: !Join ["",["arn:aws:s3:::", !Ref ParameterPrefix, "-", !FindInMap ["Names","Resources","BucketName"],"-",!Ref AWS::AccountId,'/*']]
+              -
+                Effect: Allow
+                Action:
+                - dynamodb:*
+                Resource: !Join ["",["arn:aws:dynamodb:", !Ref AWS::Region, ':', !Ref AWS::AccountId, ':table/', !Ref ParameterPrefix, !FindInMap ["Names","Resources","ConfigTableName"]]]
+              -
+                Effect: Allow
+                Action:
+                - dynamodb:*
+                Resource: !Join ["",["arn:aws:dynamodb:", !Ref AWS::Region, ':', !Ref AWS::AccountId, ':table/', !Ref ParameterPrefix, !FindInMap ["Names","Resources","LockTableName"]]]
+              - Effect: Allow
+                Action:
+                  - transcribe:StartTranscriptionJob
+                  - transcribe:GetTranscriptionJob
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: '*'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # An S3 bucket where data will be stored and accessed
+  ScnDataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      BucketName: !Join ["",[!Ref ParameterPrefix, "-", !FindInMap ["Names","Resources","BucketName"],"-",!Ref AWS::AccountId]]
+
+  EventRuleNewVideo:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: default
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Join ["",[!Ref ParameterPrefix, "-", !FindInMap ["Names","Resources","BucketName"],"-",!Ref AWS::AccountId]]
+          object:
+            key:
+              - prefix: incoming-files/
+      State: ENABLED
+      Targets:
+        - Id: Id22722964-9427-4a5d-8b62-41ebd8c1499e
+          Arn: !Ref StateMachineUtilTranscribeMediaFile
+          RoleArn: !GetAtt ApplicationRole.Arn
+  
+  EventRuleSummarizeNewTranscription:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: !Ref ScnEventBus
+      EventPattern:
+        source:
+          - !FindInMap ["EventStructures","EventSources","IngressProcessor"]
+        detail-type:
+          - !FindInMap ["EventStructures","EventTypes","TranscriptionJobCompleted"]       
+      State: ENABLED
+      Targets:
+        - Id: Id22722964-9427-4a5d-8b62-41ebd8c1498i
+          Arn: !Ref StateMachineSummarizeTranscription
+          RoleArn: !GetAtt ApplicationRole.Arn
+          InputTransformer:
+            InputPathsMap:
+              bucket: $.detail.transcription_job_info.transcript_file_bucket
+              jobname: $.detail.transcription_job_info.job_name
+              key: $.detail.transcription_job_info.transcript_file_key
+            InputTemplate: |-
+              {
+                "inbucketname": "<bucket>",
+                "inkey": "<key>",
+                "job_name": "<jobname>"
+              }
+
+  EventRuleCleanLocksOnFailure:
+    Type: AWS::Events::Rule
+    Properties:
+      EventBusName: default
+      EventPattern:
+        source:
+          - aws.states
+        detail-type:
+          - Step Functions Execution Status Change
+        detail:
+          status:
+            - FAILED
+            - TIMED_OUT
+          stateMachineArn:
+            - !Ref StateMachineUtilTranscribeMediaFile
+            - !Ref StateMachineSummarizeTranscription
+      State: ENABLED
+      Targets:
+        - Id: Id22722964-9427-4a5d-8b62-41ebd8c1497e
+          Arn: !Ref StateMachineUtilCleanLocksOnFailure
+          RoleArn: !GetAtt ApplicationRole.Arn
+
+  # An event bus for components of this application to communicate on
+  ScnEventBus:
+    Type: AWS::Events::EventBus
+    Properties: 
+      Name: !Join ["",[!Ref ParameterPrefix, "-", !FindInMap ["Names","Resources","EventBusName"]]]
+
+  EventArchive:
+    Type: AWS::Events::Archive
+    Properties:
+      ArchiveName: !Join ["",[!Ref ParameterPrefix, !FindInMap ["Names","Resources","EventBusArchive"]]]
+      SourceArn: !GetAtt ScnEventBus.Arn
+
+  # A table to use for configuration info
+  TableConifiguration:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "config_key"
+          AttributeType: "S"
+        -
+          AttributeName: "instance_id"
+          AttributeType: "S"
+      BillingMode: PAY_PER_REQUEST
+      KeySchema: 
+        - 
+          AttributeName: "config_key"
+          KeyType: "HASH"
+        - 
+          AttributeName: "instance_id"
+          KeyType: "RANGE"
+      TableName: !Join ["",[!Ref ParameterPrefix, !FindInMap ["Names","Resources","ConfigTableName"]]]
+
+  # Dynamo DB Tables
+  TableSemaphore:
+    Type: AWS::DynamoDB::Table
+    Properties: 
+      AttributeDefinitions: 
+        - 
+          AttributeName: "LockName"
+          AttributeType: "S"
+      BillingMode: PAY_PER_REQUEST
+      KeySchema: 
+        - 
+          AttributeName: "LockName"
+          KeyType: "HASH"
+      TableName: !Join ["",[!Ref ParameterPrefix, !FindInMap ["Names","Resources","LockTableName"]]]
+
+  FunctionPreparePromptFromTranscript:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/prepare_bedrock_input_from_transcription/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 1024
+      Role: !GetAtt ApplicationRole.Arn
+      FunctionName: !Join ["",[!Ref ParameterPrefix, "-",!FindInMap ["Names","Resources","FunctionPreparePromptFromTranscript"]]] 
+
+  # State Machine to transcribe a media file
+  StateMachineUtilTranscribeMediaFile:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Join ["",[!Ref ParameterPrefix, "_", !FindInMap ["Names","Resources","StateMachineUtilTranscribeFile"]]]
+      DefinitionUri: statemachines/transcribe_file.asl.yaml
+      DefinitionSubstitutions:
+        FunctionPreparePromptFromTranscript: !Ref FunctionPreparePromptFromTranscript
+        OutputBucket: !Ref ScnDataBucket
+        StateMachineUtilAquireLock: !Ref StateMachineUtilAquireLock
+        StateMachineUtilReleaseLock: !Ref StateMachineUtilReleaseLock
+        EventBusName: !Ref ScnEventBus
+        EventSource: !FindInMap ["EventStructures","EventSources","IngressProcessor"]
+        EventTypeTranscriptionCompleted: !FindInMap ["EventStructures","EventTypes","TranscriptionJobCompleted"]
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Type: "STANDARD"
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+
+  # State Machine to summarize transcription
+  StateMachineSummarizeTranscription:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Join ["",[!Ref ParameterPrefix, "_", !FindInMap ["Names","Resources","StateMachineSummarizeTranscription"]]]
+      DefinitionUri: statemachines/summarize_transcription.asl.yaml
+      DefinitionSubstitutions:
+        FunctionPreparePromptFromTranscript: !Ref FunctionPreparePromptFromTranscript
+        StateMachineUtilAquireLock: !Ref StateMachineUtilAquireLock
+        StateMachineUtilReleaseLock: !Ref StateMachineUtilReleaseLock
+        EventBusName: !Ref ScnEventBus
+        EventSource: !FindInMap ["EventStructures","EventSources","IngressProcessor"]
+        EventTranscriptionSummarizationCompleted: !FindInMap ["EventStructures","EventTypes","TranscriptionSummarizationCompleted"]
+        OutputBucket: !Ref ScnDataBucket
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Type: "STANDARD"
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+
+  StateMachineUtilAquireLock:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Join ["",[!Ref ParameterPrefix, "_", !FindInMap ["Names","Resources","StateMachineUtilAquireLock"]]]
+      DefinitionUri: statemachines/aquire-lock.asl.yaml
+      DefinitionSubstitutions:
+        TableSemaphore: !Join ["",[!Ref ParameterPrefix, !FindInMap ["Names","Resources","LockTableName"]]]
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Type: "EXPRESS"
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+
+  StateMachineUtilReleaseLock:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Join ["",[!Ref ParameterPrefix, "_", !FindInMap ["Names","Resources","StateMachineUtilReleaseLock"]]]
+      DefinitionUri: statemachines/release-lock.asl.yaml
+      DefinitionSubstitutions:
+        TableSemaphore: !Join ["",[!Ref ParameterPrefix, !FindInMap ["Names","Resources","LockTableName"]]]
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Type: "EXPRESS"
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+
+  StateMachineUtilCleanLocksOnFailure:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Join ["",[!Ref ParameterPrefix, "_", !FindInMap ["Names","Resources","StateMachineUtilCleanLocksOnFailure"]]]
+      DefinitionUri: statemachines/clean-locks-on-failure.asl.yaml
+      DefinitionSubstitutions:
+        TableSemaphore: !Join ["",[!Ref ParameterPrefix, !FindInMap ["Names","Resources","LockTableName"]]]
+        StateMachineUtilReleaseLock: !Ref StateMachineUtilReleaseLock
+      Tracing:
+        Enabled: true
+      Role: !GetAtt ApplicationRole.Arn
+      Type: "EXPRESS"
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt  LogGroupStateMachines.Arn
+        IncludeExecutionData: TRUE
+        Level: "ALL"
+  
+
+  LogGroupStateMachines:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Join ["",["/aws/states/serivcedata-",!Ref ParameterPrefix, "-", !FindInMap ["Names","Resources","LogGroupgStateMachines"]]]
