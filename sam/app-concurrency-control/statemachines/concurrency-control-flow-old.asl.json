@@ -1,0 +1,72 @@
+{
+    "Comment": "Check current number of execution. Proceed if it's lower than threshold",
+    "StartAt": "Check current running tasks",
+    "States": {
+      "Check current running tasks": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${LambdaConcurrencyController}"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException",
+              "Lambda.TooManyRequestsException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "Next": "Continue or wait",
+        "ResultPath": "$.flag"
+      },
+      "Continue or wait": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.flag.Payload",
+            "StringEquals": "proceed",
+            "Next": "Do some work"
+          },
+          {
+            "Variable": "$.flag.Payload",
+            "StringEquals": "wait",
+            "Next": "Wait"
+          }
+        ]
+      },
+      "Do some work": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "OutputPath": "$.Payload",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${LambdaDoWorkFunction}"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException",
+              "Lambda.TooManyRequestsException"
+            ],
+            "IntervalSeconds": 2,
+            "MaxAttempts": 6,
+            "BackoffRate": 2
+          }
+        ],
+        "End": true
+      },
+      "Wait": {
+        "Type": "Wait",
+        "Seconds": 5,
+        "Next": "Check current running tasks"
+      }
+    }
+  }
